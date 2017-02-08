@@ -5,6 +5,8 @@
 
 import glob
 import os.path as path
+from PIL import Image
+import torchvision.transforms as transforms
 
 
 # In[8]:
