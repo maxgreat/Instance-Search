@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[111]:
+# In[1]:
 
 import torch
 import torch.nn as nn
@@ -187,7 +187,7 @@ optimizer = optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
 #testset, imagesTest = readImages("CliListTest.txt")
 #labels = open("CliConcept.txt").read().splitlines()
 
-imageTransform = transforms.Compose( (transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
+imageTransform = transforms.Compose( (transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
 testTransform = transforms.Compose( (transforms.Scale(225), transforms.ToTensor(), transforms.Normalize(m,s)))
 batchSize = 64
 bestScore = 0
@@ -250,123 +250,11 @@ for epoch in range(50): # loop over the dataset multiple times
             if (correct >= bestScore):
                 best = mymodel
                 bestScore = correct
+                torch.save(best, "bestModel.ckpt")
             #else:
             #    mymodel = best
+            torch.save(mymodel, "model-"+epoch+".ckpt")
             mymodel = mymodel.train()
             
 print('Finished Training')
-
-
-# In[424]:
-
-t = torch.Tensor(1,3,225,225).zero_()
-mod2 = models.alexnet(pretrained=True)
-t[0] = transforms.ToTensor()(imagesList[0])
-out1 = mod2(Variable(t))
-out2 = mod2(Variable(t))
-print("Data : ", out1.data)
-print("Max : ", torch.max(out1.data, 1))
-print("Out2 : ", out2)
-print("Max 2 ", torch.max(out2.data, 1))
-
-
-# In[495]:
-
-saved = mymodel
-
-
-# In[477]:
-
-t = torch.Tensor(2,3,224,224)
-t[0] = a
-t[1] = a
-
-
-# In[480]:
-
-k = t[0]
-j = t[1]
-print((k.data == j.data).all())
-
-
-# In[485]:
-
-mod = models.alexnet(pretrained=True).eval()
-t = Variable(t)
-
-
-# In[486]:
-
-out = mod(t)
-
-
-# In[487]:
-
-print(out[0])
-print(out[1])
-print((out.data[0] == out.data[1]).all())
-
-
-# In[498]:
-
-mymodel.state_dict()
-
-
-# In[494]:
-
-print(a)
-
-
-# In[496]:
-
-model_urls = {
-    'alexnet': 'https://s3.amazonaws.com/pytorch/models/alexnet-owt-4df8aa71.pth',
-}
-
-
-class AlexNet(nn.Module):
-    def __init__(self, num_classes=464):
-        super(AlexNet, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(64, 192, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(192, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-        )
-        self.classifier = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(256 * 6 * 6, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, num_classes),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), 256 * 6 * 6)
-        x = self.classifier(x)
-        return x
-
-
-def alexnet(pretrained=False):
-    r"""AlexNet model architecture from the
-    `"One weird trick..." <https://arxiv.org/abs/1404.5997>`_ paper.
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = AlexNet()
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['alexnet']))
-    return model
 
