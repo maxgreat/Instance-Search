@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[7]:
 
 import torch
 import torch.nn as nn
@@ -20,160 +20,41 @@ from ipywidgets import FloatProgress
 from IPython.display import display
 from __future__ import print_function
 
+from model import ModelDefinition
+from dataset import ReadImages, collection
+
 
 # Process the dataset :
 # We have to compute the number of class, and the mean and std for image normalization
 
-# In[112]:
-
-def readImages(imageFile="imList.txt", size=(299,299), openAll=True):
-    """
-        args :
-            imageFile = file with one image path per line
-            openAll = bool : load images in memory or not
-        ret :
-            with openAll : <image path list>, <image list>
-            without openAll : <image path list>
-    """
-    with open(imageFile) as f:
-        imList = f.read().splitlines()
-        if openAll:
-            imOpen = []
-            for im in imList:
-                i = Image.open(im).resize(size, Image.BILINEAR)
-                if openAll:
-                    imOpen.append(i)
-            return imList, imOpen
-        else:
-            return imList
-
-
-# In[119]:
-
-def ComputeMean(imagesList, h=299, w=299):
-    """
-        TODO : make efficient
-    """
-    r,g,b = 0,0,0
-    toT = transforms.ToTensor()
-
-    #f = FloatProgress(min=0, max=len(imagesList))
-    #display(f)
-
-    for im in imagesList:
-        #f.value += 1
-        t = toT(im)
-        for e in t[0].view(-1):
-            r += e
-        for e in t[1].view(-1):
-            g += e
-        for e in t[2].view(-1):
-            b += e
-    return r/(len(imagesList)*h*w), g/(len(imagesList)*h*w), b/(len(imagesList)*h*w) 
-
-
-# In[123]:
-
-def ComputeStdDev(imagesList, mean):
-    """
-        TODO : make efficient
-    """
-    toT = transforms.ToTensor()
-    r,g,b = 0,0,0
-    h = len(toT(imagesList[0])[0])
-    w = len(toT(imagesList[0])[0][0])
-    for im in imagesList:
-        t = toT(im)
-        for e in t[0].view(-1):
-            r += (e - mean[0])**2
-        for e in t[1].view(-1):
-            g += (e - mean[1])**2
-        for e in t[2].view(-1):
-            b += (e - mean[2])**2
-    return (r/(len(imagesList)*h*w))**0.5, (g/(len(imagesList)*h*w))**0.5, (b/(len(imagesList)*h*w))**0.5
-
-
 # Read the dataset and compute the mean and std dev :
 
-# In[125]:
+# In[9]:
 
-#trainset, imagesList = readImages("CliList.txt")
-#m = ComputeMean(imagesList)
+trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0], openAll=True)
+
+
+# In[11]:
+
+print(trainset[0])
+
+
+# In[12]:
+
+m = collection.ComputeMean(trainset[:][0])
 print("Mean : ", m)
 #s = ComputeStdDev(imagesList, m)
-print("std dev : ", s)
+#print("std dev : ", s)
 
 
 # Define the network as class (from nn.Module) :
-
-# In[137]:
-
-class maxnet(nn.Module):
-    def __init__(self, nbClass=464):
-        super(maxnet, self).__init__()
-        self.features = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2)),
-                nn.ReLU(True),
-                nn.MaxPool2d((3, 3), stride=(2, 2), dilation=(1, 1)),
-                nn.Conv2d(64, 192, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2)),
-                nn.ReLU(True),
-                nn.MaxPool2d((3, 3), stride=(2, 2), dilation=(1, 1)),
-                nn.Conv2d(192, 384, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)),
-                nn.ReLU(True),
-                nn.Conv2d(384, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)),
-                nn.ReLU(True),
-                nn.Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)),
-                nn.ReLU(True),
-                nn.MaxPool2d((3, 3), stride=(2, 2), dilation=(1, 1))
-        )
-        self.classifier = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(256 * 6 * 6, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            #nn.Linear(4096, 4096),
-            #nn.ReLU(inplace=True),
-            nn.Linear(4096, nbClass),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
-#def createMaxnet():
-    
-
 
 # Training
 
 # In[138]:
 
 #create the network
-mymodel = maxnet()
-
-
-# In[139]:
-
-#copy parameters from alexnet
-a = models.alexnet(pretrained=True)
-
-#for each feature
-for i, f in enumerate(mymodel.features):
-    if type(f) is torch.nn.modules.conv.Conv2d:
-        #we copy convolution parameters
-        f.weight.data = a.features[i].weight.data
-        f.bias.data = a.features[i].bias.data
-
-#for each classifier element
-for i, f in enumerate(mymodel.classifier):
-    if type(f) is torch.nn.modules.linear.Linear:
-        #we copy fully connected parameters
-        if f.weight.size() == a.classifier[i].weight.size():
-            f.weight.data = a.classifier[i].weight.data
-            f.bias.data = a.classifier[i].bias.data
-        
+mymodel = Maxnet()
 
 
 # In[143]:
