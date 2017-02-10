@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[16]:
 
 import glob
 import os.path as path
@@ -49,4 +49,11 @@ def readImageswithPattern(folder='.', matchFunc=lambda x:x.split('.')[0]):
     for ext in exts:
         r.extend( [(im, matchFunc(im)) for im in glob.iglob(path.join(folder, ext)) ] )
     return r
+
+
+# In[17]:
+
+def openAll(imageList, trans=transforms.Compose( (transforms.ToTensor()) ) ):
+    return [trans(Image.open(im)) for im, c in imageList]
+        
 
