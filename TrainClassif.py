@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[2]:
+# In[1]:
 
 import torch
 import torch.nn as nn
@@ -31,13 +31,13 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 # Read the dataset and compute the mean and std dev :
 
-# In[3]:
+# In[2]:
 
 trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
 testset = ReadImages.readImageswithPattern('/video/CLICIDE/test/', lambda x:x.split('/')[-1].split('-')[0])
 
 
-# In[4]:
+# In[3]:
 
 def MeanAndStd(imageList, fname=None):
     imageListOpen = ReadImages.openAll(trainset, (225,225))
@@ -53,7 +53,7 @@ def MeanAndStd(imageList, fname=None):
     return m,s
 
 
-# In[5]:
+# In[4]:
 
 def readMeanStd(fname='data/cli.txt'):
     with open(fname) as f:
@@ -62,7 +62,7 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-# In[6]:
+# In[5]:
 
 m, s = readMeanStd()
 
@@ -71,39 +71,54 @@ m, s = readMeanStd()
 
 # Training
 
-# In[7]:
+# In[6]:
 
 #create the network
 mymodel = ModelDefinition.Maxnet()
 ModelDefinition.copyParameters(mymodel, models.alexnet(pretrained=True))
 
-#define the optimizer to only the classifier with lr of 1e-2
+
+# In[18]:
+
+#define the optimizer to only the classifier with lr of 1e-3
+
 optimizer=optim.SGD([
                 {'params': mymodel.classifier.parameters()},
                 {'params': mymodel.features.parameters(), 'lr': 0.0}
-            ], lr=1e-2, momentum=0.9)
+            ], lr=1e-3, momentum=0.9)
 
 
-# In[8]:
+# In[7]:
 
 listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
 
 
-# In[9]:
+# In[8]:
 
 labels = list(set(listLabel))
 
 
-# In[10]:
+# In[9]:
 
 for i in range(len(trainset)):
     trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
 
 
-# In[11]:
+# In[10]:
 
 for i in range(len(testset)):
     testset[i] = (Image.open(testset[i][0]), testset[i][1])
+
+
+# In[ ]:
+
+mymodel = torch.load('model-5.cpkt')
+ep = 5
+
+
+# In[17]:
+
+ep = 2
 
 
 # In[ ]:
@@ -120,10 +135,10 @@ criterion = nn.loss.CrossEntropyLoss()
 mymodel.train().cuda()
 
 imageTransform = transforms.Compose( (transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
-testTransform = transforms.Compose( (transforms.Scale(225), transforms.ToTensor(), transforms.Normalize(m,s)))
+testTransform = transforms.Compose( (transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)))
 batchSize = 64
 bestScore = 0
-for epoch in range(50): # loop over the dataset multiple times
+for epoch in range(ep, 50): # loop over the dataset multiple times
     running_loss = 0.0
     random.shuffle(trainset)    
     for i in range(len(trainset)/batchSize):
@@ -174,7 +189,7 @@ for epoch in range(50): # loop over the dataset multiple times
             rest = len(testset)%batchSize
             inp = torch.Tensor(rest,3,225,225).cuda()
             for j in range(rest):
-                inp[j] = testTransform(testset[len(testset)-rest+j])
+                inp[j] = testTransform(testset[len(testset)-rest+j][0])
             outputs = mymodel(Variable(inp))
             _, predicted = torch.max(outputs.data, 1)
             predicted = predicted.tolist()
@@ -189,7 +204,7 @@ for epoch in range(50): # loop over the dataset multiple times
                 torch.save(best, "bestModel.ckpt")
             #else:
             #    mymodel = best
-            torch.save(mymodel, "model-"+epoch+".ckpt")
+            torch.save(mymodel, "model-"+str(epoch)+".ckpt")
             mymodel = mymodel.train()
             
 print('Finished Training')
