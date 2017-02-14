@@ -51,9 +51,17 @@ def readImageswithPattern(folder='.', matchFunc=lambda x:x.split('.')[0]):
     return r
 
 
-# In[17]:
+# In[20]:
 
-def openAll(imageList, trans=transforms.Compose( (transforms.ToTensor()) ) ):
-    return [trans(Image.open(im)) for im, c in imageList]
+def openAll(imageList, size=0 ):
+    if size == 0:
+        return [Image.open(im) for im, c in imageList]
+    else:
+        return [Image.open(im).resize(size) for im, c in imageList]
         
+
+
+# In[ ]:
+
+
 

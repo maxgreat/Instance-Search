@@ -54,3 +54,18 @@ def ComputeStdDev(imagesList, mean):
             b += (e - mean[2])**2
     return (r/(len(imagesList)*h*w))**0.5, (g/(len(imagesList)*h*w))**0.5, (b/(len(imagesList)*h*w))**0.5
 
+
+# In[2]:
+
+def createConceptDict(imageList):
+    """
+        Create a dictionnary that store for each concept the list of image path corresponding
+    """
+    ConceptDict = {}
+    for im in imageList:
+        if im[1] in ConceptDict.keys():
+            ConceptDict[im[1]].append(im[0])
+        else:
+            ConceptDict[im[1]] = [im[0]]
+    return ConceptDict
+
