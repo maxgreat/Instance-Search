@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[2]:
 
 import torch
 import torch.nn as nn
@@ -31,15 +31,10 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 # Read the dataset and compute the mean and std dev :
 
-# In[2]:
+# In[3]:
 
 trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
 testset = ReadImages.readImageswithPattern('/video/CLICIDE/test/', lambda x:x.split('/')[-1].split('-')[0])
-
-
-# In[3]:
-
-imageListOpen[1].size
 
 
 # In[4]:
@@ -58,7 +53,7 @@ def MeanAndStd(imageList, fname=None):
     return m,s
 
 
-# In[3]:
+# In[5]:
 
 def readMeanStd(fname='data/cli.txt'):
     with open(fname) as f:
@@ -67,7 +62,7 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-# In[4]:
+# In[6]:
 
 m, s = readMeanStd()
 
@@ -76,42 +71,42 @@ m, s = readMeanStd()
 
 # Training
 
-# In[5]:
+# In[7]:
 
 #create the network
 mymodel = ModelDefinition.Maxnet()
 ModelDefinition.copyParameters(mymodel, models.alexnet(pretrained=True))
 
 #define the optimizer to only the classifier with lr of 1e-2
-optim.SGD([
+optimizer=optim.SGD([
                 {'params': mymodel.classifier.parameters()},
                 {'params': mymodel.features.parameters(), 'lr': 0.0}
             ], lr=1e-2, momentum=0.9)
 
 
-# In[6]:
+# In[8]:
 
 listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
 
 
-# In[7]:
+# In[9]:
 
 labels = list(set(listLabel))
 
 
-# In[8]:
+# In[10]:
 
 for i in range(len(trainset)):
     trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
 
 
-# In[9]:
+# In[11]:
 
 for i in range(len(testset)):
     testset[i] = (Image.open(testset[i][0]), testset[i][1])
 
 
-# In[10]:
+# In[ ]:
 
 #mymodel.cuda()
 #mymodel = best.train()
@@ -200,26 +195,26 @@ for epoch in range(50): # loop over the dataset multiple times
 print('Finished Training')
 
 
-# In[10]:
+# In[ ]:
 
 m = ModelDefinition.SiameseMax()
 
 
-# In[11]:
+# In[ ]:
 
 im = Image.open(trainset[0][0]).resize( (225, 225))
 testTransform = transforms.Compose( (transforms.Scale(225), transforms.ToTensor()))
 im = testTransform(im)
 
 
-# In[13]:
+# In[ ]:
 
 t = torch.Tensor(1,3,225,225)
 t[0] = im
 output = m( Variable(t), Variable(t) ) 
 
 
-# In[20]:
+# In[ ]:
 
 optimizer
 
