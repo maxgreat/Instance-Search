@@ -29,12 +29,12 @@ from dataset import ReadImages, collection
 
 # Read the dataset and compute the mean and std dev :
 
+# In[8]:
+
+trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
+
+
 # In[9]:
-
-trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0], openAll=True)
-
-
-# In[11]:
 
 print(trainset[0])
 
@@ -138,4 +138,28 @@ for epoch in range(50): # loop over the dataset multiple times
             mymodel = mymodel.train()
             
 print('Finished Training')
+
+
+# In[10]:
+
+m = ModelDefinition.SiameseMax()
+
+
+# In[11]:
+
+im = Image.open(trainset[0][0]).resize( (225, 225))
+testTransform = transforms.Compose( (transforms.Scale(225), transforms.ToTensor()))
+im = testTransform(im)
+
+
+# In[13]:
+
+t = torch.Tensor(1,3,225,225)
+t[0] = im
+output = m( Variable(t), Variable(t) ) 
+
+
+# In[19]:
+
+print(output[0].size())
 

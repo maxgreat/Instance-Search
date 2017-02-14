@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[ ]:
+# In[1]:
 
 import torch
 import torch.nn as nn
@@ -58,7 +58,7 @@ class siameseMax(nn.Module):
         First try siamese network
     """
     def __init__(self, nbClass=464):
-        super(maxnet, self).__init__()
+        super(siameseMax, self).__init__()
         self.features = nn.Sequential(
                 nn.Conv2d(3, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2)),
                 nn.ReLU(True),
@@ -97,7 +97,7 @@ class siameseMax(nn.Module):
 # In[ ]:
 
 def SiameseMax(nbDim=464):
-    return maxnet(nbDim)
+    return siameseMax(nbDim)
 
 
 # In[ ]:
