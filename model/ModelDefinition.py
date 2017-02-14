@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.parallel
 
 
-# In[ ]:
+# In[2]:
 
 class maxnet(nn.Module):
     def __init__(self, nbClass=464):
@@ -42,7 +42,7 @@ class maxnet(nn.Module):
         x = self.features(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
-        return xa
+        return x
 
 
 # In[ ]:
