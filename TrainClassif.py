@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
 import torch
 import torch.nn as nn
@@ -23,16 +23,20 @@ from __future__ import print_function
 from model import ModelDefinition
 from dataset import ReadImages, collection
 import os
+import os.path as path
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 
-# In[3]:
+# In[ ]:
 
 def MeanAndStd(imageList, fname=None):
-    imageListOpen = ReadImages.openAll(trainset, (225,225))
-    m = collection.ComputeMean(imageListOpen)
+    """
+        Take a list of (image name, label) and return the mean and std dev and save it to a file is fname is set
+    """
+    imageList = ReadImages.openAll(trainset, (225,225))
+    m = collection.ComputeMean(imageList)
     print("Mean : ", m)
-    s = collection.ComputeStdDev(imageListOpen, m)
+    s = collection.ComputeStdDev(imageList, m)
     print("std dev : ", s)
     if not fname is None:
         with open(fname, "w") as f:
@@ -42,7 +46,7 @@ def MeanAndStd(imageList, fname=None):
     return m,s
 
 
-# In[4]:
+# In[ ]:
 
 def readMeanStd(fname='data/cli.txt'):
     with open(fname) as f:
@@ -58,53 +62,53 @@ def testNet(net, testset, labels, batchSize=32):
         Test the network accuracy on a testset
         Return the number of succes and the number of evaluations done
     """
-        net = net.eval() #set the network in eval mode
-        correct = 0
-        tot = 0
-        cpt = 0
-        for j in range(len(testset)/batchSize):
-            
-            #set the inputs
-            inp = torch.Tensor(batchSize,3,225,225).cuda()
-            for k in range(batchSize):
-                inp[k] = testTransform(testset[j*batchSize+k][0])
-                cpt += 1
-            
-            #forward pass
-            outputs = net(Variable(inp), volatile=True) #volatile the free memory after the forward
-            
-            #compute score
-            _, predicted = torch.max(outputs.data, 1)
-            predicted = predicted.tolist()
-            for k in range(batchSize):
-                if (testset[j*batchSize+k][1] in labels):
-                    correct += (predicted[k][0] == labels.index(testset[j*batchSize+k][1]))
-                    tot += 1
-                    
-        #handle the rest of the testset
-        rest = len(testset)%batchSize
-        
-        #set inputs
-        inp = torch.Tensor(rest,3,225,225).cuda()
-        for j in range(rest):
-            inp[j] = testTransform(testset[len(testset)-rest+j][0])
-        
-        #forward
-        outputs = mymodel(Variable(inp), volatile=True)
-        
+    net = net.eval() #set the network in eval mode
+    correct = 0
+    tot = 0
+    cpt = 0
+    for j in range(len(testset)/batchSize):
+
+        #set the inputs
+        inp = torch.Tensor(batchSize,3,225,225).cuda()
+        for k in range(batchSize):
+            inp[k] = testTransform(testset[j*batchSize+k][0])
+            cpt += 1
+
+        #forward pass
+        outputs = net(Variable(inp, volatile=True)) #volatile the free memory after the forward
+
         #compute score
         _, predicted = torch.max(outputs.data, 1)
         predicted = predicted.tolist()
-        for j in range(rest):
-            if (testset[len(testset)-rest+j][1] in labels):
-               correct += (predicted[j][0] == labels.index(testset[len(testset)-rest+j][1]))
-               tot += 1
-        return correct, tot
+        for k in range(batchSize):
+            if (testset[j*batchSize+k][1] in labels):
+                correct += (predicted[k][0] == labels.index(testset[j*batchSize+k][1]))
+                tot += 1
+
+    #handle the rest of the testset
+    rest = len(testset)%batchSize
+
+    #set inputs
+    inp = torch.Tensor(rest,3,225,225).cuda()
+    for j in range(rest):
+        inp[j] = testTransform(testset[len(testset)-rest+j][0])
+
+    #forward
+    outputs = mymodel(Variable(inp, volatile=True))
+
+    #compute score
+    _, predicted = torch.max(outputs.data, 1)
+    predicted = predicted.tolist()
+    for j in range(rest):
+        if (testset[len(testset)-rest+j][1] in labels):
+           correct += (predicted[j][0] == labels.index(testset[len(testset)-rest+j][1]))
+           tot += 1
+    return correct, tot
 
 
-# In[24]:
+# In[ ]:
 
-def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimize, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs : 
@@ -114,7 +118,7 @@ def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, 
             * loss function (criterion)
             * optimizer
     """
-    for epoch in range(ep, 100): # loop over the dataset multiple times
+    for epoch in range(epochStart, nbEpoch): # loop over the dataset multiple times
         running_loss = 0.0
         random.shuffle(trainset)    
         for i in range(len(trainset)/batchSize):
@@ -146,9 +150,10 @@ def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, 
                 print('test :')
                 c, t = testNet(mymodel, testset, labels, batchSize=batchSize)
                 print("Correct : ", c, "/", t)
-                if (correct >= bestScore):
+                if (c >= bestScore):
+                    print("Save best model")
                     best = mymodel
-                    bestScore = correct
+                    bestScore = c
                     torch.save(best, "bestModel.ckpt")
                 #else:
                 #    mymodel = best
@@ -156,21 +161,62 @@ def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, 
                 mymodel.train() #set the model in train mode
 
     print('Finished Training')
+    return mymodel
 
 
 # In[ ]:
 
-if __name__=='__main__':
+def copyResNet(net, netBase):
+    """
+        TODO : make more general
+    """
+    net.conv1.weight.data = netBase.conv1.weight.data
+    net.bn1.weight.data = netBase.bn1.weight.data
+    net.bn1.bias.data = netBase.bn1.bias.data
+
+    lLayer = [(net.layer1, netBase.layer1, 3),
+              (net.layer2, netBase.layer2, 4),
+              (net.layer3, netBase.layer3, 6),
+              (net.layer4, netBase.layer4, 3)
+             ]
+
+    for targetLayer, rootLayer, nbC in lLayer:
+        for i in range(nbC):
+            targetLayer[i].conv1.weight.data = rootLayer[i].conv1.weight.data
+            targetLayer[i].bn1.weight.data = rootLayer[i].bn1.weight.data
+            targetLayer[i].bn1.bias.data = rootLayer[i].bn1.bias.data
+            targetLayer[i].conv2.weight.data = rootLayer[i].conv2.weight.data
+            targetLayer[i].bn2.weight.data = rootLayer[i].bn2.weight.data
+            targetLayer[i].bn2.bias.data = rootLayer[i].bn2.bias.data
+            targetLayer[i].conv3.weight.data = rootLayer[i].conv3.weight.data
+            targetLayer[i].bn3.weight.data = rootLayer[i].bn3.weight.data
+            targetLayer[i].bn3.bias.data = rootLayer[i].bn3.bias.data
+        targetLayer[0].downsample[0].weight.data = rootLayer[0].downsample[0].weight.data
+        targetLayer[0].downsample[1].weight.data = rootLayer[0].downsample[1].weight.data
+        targetLayer[0].downsample[1].bias.data = rootLayer[0].downsample[1].bias.data 
+
+
+# In[ ]:
+
+def run1():
     
     #training and test sets
-    trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
-    testset = ReadImages.readImageswithPattern('/video/CLICIDE/test/', lambda x:x.split('/')[-1].split('-')[0])
+    #trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
+    #testset = ReadImages.readImageswithPattern('/video/CLICIDE/test/', lambda x:x.split('/')[-1].split('-')[0])
 
-    m, s = readMeanStd('data/cli.txt')
+    trainset = ReadImages.readImageswithPattern('/video/fourviere', lambda x:x.split('/')[-1].split('-')[0])
+    testset = ReadImages.readImageswithPattern('/video/fourviere/test/', lambda x:x.split('/')[-1].split('-')[0])
+    
     
     #define the labels list
     listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
     labels = list(set(listLabel)) #we have to give a number for each label
+    print("There is ", len(labels), " categories")
+    
+    m, s = readMeanStd('data/fou.txt')
+    
+    #print("Compute Mean and Std dev on the collection")
+    #m, s = MeanAndStd(trainset, "data/fou.txt")
     
     #open the images
     #do that only if it fits in memory !
@@ -179,31 +225,81 @@ if __name__=='__main__':
         
     for i in range(len(testset)):
         testset[i] = (Image.open(testset[i][0]), testset[i][1])
-        
+    
+    
+    
+    
     
     #define the model
-    #mymodel = ModelDefinition.Maxnet()
+    mymodel = models.resnet50(len(labels))
+    copyResNet(mymodel, models.resnet50(pretrained=True))
     #ModelDefinition.copyParameters(mymodel, models.alexnet(pretrained=True))
     
     #or load the model
-    mymodel = torch.load('bestModel.ckpt')
+    #mymodel = torch.load('bestModel.ckpt')
     
     criterion = nn.loss.CrossEntropyLoss()
     mymodel.train().cuda()
     
     #define the optimizer to only the classifier with lr of 1e-2
+    #optimizer=optim.SGD([
+    #                {'params': mymodel.classifier.parameters()},
+    #                {'params': mymodel.features.parameters(), 'lr': 0.0}
+    #            ], lr=1e-3, momentum=0.9)
     optimizer=optim.SGD([
-                    {'params': mymodel.classifier.parameters()},
-                    {'params': mymodel.features.parameters(), 'lr': 0.0}
-                ], lr=1e-2, momentum=0.9)
-
+                    {'params': mymodel.conv1.parameters(),
+                     'params': mymodel.bn1.parameters(),
+                     'params': mymodel.layer1.parameters(),
+                     'params': mymodel.layer2.parameters(),
+                     'params': mymodel.layer3.parameters(),
+                     'params': mymodel.layer4.parameters()},
+                    {'params': mymodel.fc.parameters(), 'lr': 0.01}
+                ], lr=0.0, momentum=0.9)
 
     imageTransform = transforms.Compose( (transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
     testTransform = transforms.Compose( (transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)))
     batchSize = 64
     
+    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
+          saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0)
     
     #define the optimizer train on all the network
     optimizer=optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
-    
+    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
+          saveDir="data/", batchSize=32, epochStart=40, nbEpoch=50, bestScore=290)
+
+
+# In[ ]:
+
+def run2():
+    trainset = ReadImages.readImageswithPattern('/video/fourviere', lambda x:x.split('/')[-1].split('-')[0])
+    testset = ReadImages.readImageswithPattern('/video/fourviere/test/', lambda x:x.split('/')[-1].split('-')[0])
+
+
+    #define the labels list
+    listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
+    labels = list(set(listLabel)) #we have to give a number for each label
+    print("There is ", len(labels), " categories")
+
+    m, s = readMeanStd('data/fou.txt')
+
+    #print("Compute Mean and Std dev on the collection")
+    #m, s = MeanAndStd(trainset, "data/fou.txt")
+
+    #open the images
+    #do that only if it fits in memory !
+    for i in range(len(trainset)):
+        trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
+
+    for i in range(len(testset)):
+        testset[i] = (Image.open(testset[i][0]), testset[i][1])
+
+    criterion = nn.loss.CrossEntropyLoss()
+    imageTransform = transforms.Compose( (transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
+    testTransform = transforms.Compose( (transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)))
+    mymodel = torch.load('bestModel.ckpt')
+    mymodel.train().cuda()
+    optimizer=optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
+    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
+          saveDir="data/", batchSize=32, epochStart=37, nbEpoch=50, bestScore=308)
 
