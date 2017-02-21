@@ -71,7 +71,7 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-def testNet(net, testset, labels, batchSize=32):
+def testNet(net, testset_tuple, labels, batchSize=32):
     """
         Test the network accuracy on a testset
         Return the number of succes and the number of evaluations done
@@ -81,22 +81,24 @@ def testNet(net, testset, labels, batchSize=32):
     tot = [0]
     pos_values, neg_values = [], []
 
-    values = torch.Tensor(len(testset)).cuda()
-
     def get_values(i, batch):
         batchSize = len(batch)
         inputs1 = torch.Tensor(batchSize,3,225,225).cuda()
         inputs2 = torch.Tensor(batchSize,3,225,225).cuda()
         for k in range(batchSize):
-            inputs1[k] = testTransform(testset[i+k][0][0])
-            inputs2[k] = testTransform(testset[i+k][0][1])
+            # get indices, then corresponding images
+            i1, i2 = batch[k][0]
+            inputs1[k] = testset_tuple[0][i1]
+            inputs2[k] = testset_tuple[1][i2]
         get_el = None
         comp = None
         if cosine_dist:
             outputs1, outputs2 = net(Variable(inputs1, volatile=True), Variable(inputs2, volatile=True))
+            values, predicted = torch.Tensor(batchSize).cuda(), torch.Tensor(batchSize).cuda()
             for k in range(batchSize):
                 o1, o2 = outputs1.data[k], outputs2.data[k]
                 values[k] = torch.dot(o1, o2) / (o1.norm() * o2.norm())
+                predicted[k] = 1 if values[k] > cos_margin else -1
 
             def get_el(x, i):
                 return x[i]
@@ -118,19 +120,19 @@ def testNet(net, testset, labels, batchSize=32):
             # if testset[i+k][1] != 1 and random.random() < 0.005:
             #     print('neg:', get_el(predicted, k), get_el(values, k))
 
-            if testset[i+k][1] == 1:
+            if batch[k][1] == 1:
                 pos_values.append(get_el(values, k))
             else:
                 neg_values.append(get_el(values, k))
-            correct[0] += comp(get_el(predicted, k), testset[i+k][1])
+            correct[0] += comp(get_el(predicted, k), batch[k][1])
             tot[0] += 1
 
-    eval_by_batches(get_values, testset, batchSize)
+    eval_by_batches(get_values, testset_tuple[2], batchSize)
     print('mean pos: ', sum(pos_values) / float(len(pos_values)), 'mean neg: ', sum(neg_values) / float(len(neg_values)))
     return correct[0], tot[0]
 
 
-def train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train(mymodel, trainset, testset_tuple, labels, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs :
@@ -152,7 +154,7 @@ def train(mymodel, trainset, testset, labels, imageTransform, testTransform, cri
             # test model every x mini-batches
             if batchCount[0] % 100 == 0:
                 print('test :')
-                correct, tot = testNet(mymodel, testset, labels, batchSize=batchSize)
+                correct, tot = testNet(mymodel, testset_tuple, labels, batchSize=batchSize)
                 print("Correct : ", correct, "/", tot)
                 if (correct >= best[0]):
                     bestModel = mymodel
@@ -235,13 +237,35 @@ if __name__ == '__main__':
     listLabel = [t[1] for t in trainset if 'wall' not in t[1]]
     labels = list(set(listLabel))  # we have to give a number for each label
 
+    testTransform = transforms.Compose((transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
+    imageTransform = transforms.Compose((transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
+
     # open the images
     # do that only if it fits in memory !
     for i in range(len(trainset)):
         trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
 
+    # transform the test images already
+    testset1 = []
+    testlabels = []
     for i in range(len(testset)):
-        testset[i] = (Image.open(testset[i][0]), testset[i][1])
+        if testset[i][1] in labels:
+            testset1.append(testTransform(Image.open(testset[i][0])))
+            testlabels.append(testset[i][1])
+
+    # transform all training images for testset
+    testset2 = []
+    for i in range(len(trainset)):
+        testset2.append(testTransform(trainset[i][0]))
+
+    # couples of indices for the testing
+    couples_test = []
+    for i in range(len(testset1)):
+        for j in range(len(testset2)):
+            couples_test.append(((i, j), 1 if testlabels[i] == trainset[j][1] else -1 if cosine_dist else 0))
+
+    # choose only x couples at random as test
+    couples_test = random.sample(couples_test, 5000)
 
     # define the model
     # mymodel = ModelDefinition.Maxnet()
@@ -249,10 +273,7 @@ if __name__ == '__main__':
 
     couples = get_couples(trainset)
     print('training set size: ', len(couples))
-    couples_test = get_couples(testset, 1.0)
     print('test set size: ', len(couples_test))
-    imageTransform = transforms.Compose((transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
-    testTransform = transforms.Compose((transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
     if cosine_dist:
         criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
     else:
@@ -270,10 +291,10 @@ if __name__ == '__main__':
         ], lr=1e-2, momentum=0.9)
 
         batchSize = 64
-        train(mymodel, couples, couples_test, labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
         # define the optimizer train on all the network
         optimizer = optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
-        train(mymodel, couples, couples_test, labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
     else:
         mymodel = Siamese1(models.alexnet(pretrained=True))
         mymodel.train().cuda()
@@ -282,4 +303,4 @@ if __name__ == '__main__':
         optimizer = optim.SGD(mymodel.parameters(), lr=1e-4, momentum=0.9)
 
         # use the couples as train and test set
-        train(mymodel, couples, couples_test, labels, imageTransform, testTransform, criterion, optimizer)
+        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer)
