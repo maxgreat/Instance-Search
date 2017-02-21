@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[ ]:
+# In[29]:
 
 import torch
 import torch.nn as nn
@@ -27,7 +27,7 @@ import os.path as path
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 
-# In[ ]:
+# In[30]:
 
 def MeanAndStd(imageList, fname=None):
     """
@@ -46,7 +46,7 @@ def MeanAndStd(imageList, fname=None):
     return m,s
 
 
-# In[ ]:
+# In[31]:
 
 def readMeanStd(fname='data/cli.txt'):
     with open(fname) as f:
@@ -55,7 +55,7 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-# In[ ]:
+# In[32]:
 
 def testNet(net, testset, labels, batchSize=32):
     """
@@ -106,9 +106,9 @@ def testNet(net, testset, labels, batchSize=32):
     return correct, tot
 
 
-# In[ ]:
+# In[33]:
 
-def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs : 
@@ -161,10 +161,10 @@ def train(mymodel, trainset, testset, imageTransform, testTransform, criterion, 
                 mymodel.train() #set the model in train mode
 
     print('Finished Training')
-    return mymodel
+    return bestScore
 
 
-# In[ ]:
+# In[34]:
 
 def copyResNet(net, netBase):
     """
@@ -196,7 +196,7 @@ def copyResNet(net, netBase):
         targetLayer[0].downsample[1].bias.data = rootLayer[0].downsample[1].bias.data 
 
 
-# In[ ]:
+# In[35]:
 
 def run1():
     
@@ -209,7 +209,7 @@ def run1():
     
     
     #define the labels list
-    listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
+    listLabel = [t[1] for t in trainset if not 'wall' in t[1]] + [t[1] for t in testset if not 'wall' in t[1]]
     labels = list(set(listLabel)) #we have to give a number for each label
     print("There is ", len(labels), " categories")
     
@@ -260,16 +260,11 @@ def run1():
     testTransform = transforms.Compose( (transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)))
     batchSize = 64
     
-    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
+    train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, 
           saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0)
-    
-    #define the optimizer train on all the network
-    optimizer=optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
-    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
-          saveDir="data/", batchSize=32, epochStart=40, nbEpoch=50, bestScore=290)
 
 
-# In[ ]:
+# In[36]:
 
 def run2():
     trainset = ReadImages.readImageswithPattern('/video/fourviere', lambda x:x.split('/')[-1].split('-')[0])
@@ -300,6 +295,116 @@ def run2():
     mymodel = torch.load('bestModel.ckpt')
     mymodel.train().cuda()
     optimizer=optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
-    train(mymodel, trainset, testset, imageTransform, testTransform, criterion, optimizer, 
+    train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, 
           saveDir="data/", batchSize=32, epochStart=37, nbEpoch=50, bestScore=308)
+
+
+# In[45]:
+
+def run3():
+    #training and test sets
+    trainset = ReadImages.readImageswithPattern('/video/CLICIDE', lambda x:x.split('/')[-1].split('-')[0])
+    testset = ReadImages.readImageswithPattern('/video/CLICIDE/test/', lambda x:x.split('/')[-1].split('-')[0])
+    
+    
+    #define the labels list
+    listLabel = [t[1] for t in trainset if not 'wall' in t[1]]
+    labels = list(set(listLabel)) #we have to give a number for each label
+    print("There is ", len(labels), " categories")
+    
+    m, s = readMeanStd('data/cli.txt')
+    
+    #print("Compute Mean and Std dev on the collection")
+    #m, s = MeanAndStd(trainset, "data/fou.txt")
+    
+    #open the images
+    #do that only if it fits in memory !
+    for i in range(len(trainset)):
+        trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
+        
+    for i in range(len(testset)):
+        testset[i] = (Image.open(testset[i][0]), testset[i][1])
+    
+    
+    
+    
+    
+    #define the model
+    #mymodel = models.resnet50(len(labels))
+    #copyResNet(mymodel, models.resnet50(pretrained=True))
+    #ModelDefinition.copyParameters(mymodel, models.alexnet(pretrained=True))
+    
+    #or load the model
+    mymodel = torch.load('bestModel.ckpt')
+    
+    criterion = nn.loss.CrossEntropyLoss()
+    mymodel.train().cuda()
+    
+    optimizer=optim.SGD([
+                    {'params': mymodel.conv1.parameters(),
+                     'params': mymodel.bn1.parameters(),
+                     'params': mymodel.layer1.parameters(),
+                     'params': mymodel.layer2.parameters(),
+                     'params': mymodel.layer3.parameters(),
+                     'params': mymodel.layer4.parameters()},
+                    {'params': mymodel.fc.parameters(), 'lr': 0.01}
+                ], lr=0.0, momentum=0.9)
+
+    imageTransform = transforms.Compose( (transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)) )
+    testTransform = transforms.Compose( (transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m,s)))
+    batchSize = 64
+    
+    #best = train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, 
+    #      saveDir="data/", batchSize=batchSize, epochStart=0, nbEpoch=40, bestScore=0)
+    
+    #print("Best score after 40 epoch : ", best)
+    
+    mymodel = torch.load('bestModel.ckpt')
+    mymodel.train().cuda()
+    optimizer=optim.SGD([
+                    {'params': mymodel.conv1.parameters(),
+                     'params': mymodel.bn1.parameters(),
+                     'params': mymodel.layer1.parameters(),
+                     'params': mymodel.layer2.parameters(),
+                     'params': mymodel.layer3.parameters(),
+                     'params': mymodel.layer4.parameters()},
+                    {'params': mymodel.fc.parameters(), 'lr': 0.001}
+                ], lr=0.0, momentum=0.9)
+
+    best = train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, 
+          saveDir="data/", batchSize=batchSize, epochStart=40, nbEpoch=50, bestScore=0)
+    print("Best score after finetuning : ", best)
+    
+
+    #define the optimizer train on all the network
+    mymodel = torch.load('bestModel.ckpt')
+    mymodel.train().cuda()
+    optimizer=optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
+    best = train(mymodel, trainset, testset, labels, imageTransform, testTransform, criterion, optimizer, 
+          saveDir="data/", batchSize=batchSize, epochStart=40, nbEpoch=50, bestScore=best)
+    print("Best score after full finetuning : ", best)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+
+# In[46]:
+
+run3()
+
+
+# In[47]:
+
+help(optimizer)
 
