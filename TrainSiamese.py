@@ -5,14 +5,16 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 from torch.autograd import Variable
 
+import math
 import itertools
+import functools
 import random
 import time
 from os import path
 
 from PIL import Image
 
-from model.siamese import Siamese1, cosine_dist, cos_margin
+from model.siamese import Siamese1, normalize_rows
 from dataset import ReadImages
 
 # TODO create generator to yield couples of images
@@ -25,6 +27,7 @@ from dataset import ReadImages
 # batch by batch on couples/triples
 
 finetuning = False
+cos_margin = 0  # angle of 30 degrees (pi/6)
 
 
 # get batches of size batch_size from the set x
@@ -34,12 +37,57 @@ def batches(x, batch_size):
 
 
 # evaluate a function by batches of size batch_size on the set x
-def eval_by_batches(f, x, batch_size):
-    if (batch_size <= 0):
-        f(0, x)
-        return
-    for idx in range(0, len(x), batch_size):
-        f(idx, x[idx:min(idx + batch_size, len(x))])
+# and fold over the returned values
+def fold_batches(f, init, x, batch_size):
+    if batch_size <= 0:
+        return f(init, 0, x)
+    return functools.reduce(lambda last, idx: f(last, idx, x[idx:min(idx + batch_size, len(x))]), range(0, len(x), batch_size), init)
+
+
+def cos_sim(x1, x2):
+    return torch.dot(x1, x2) / (x1.norm() * x2.norm())
+
+
+# cosine similarity for normed inputs
+def cos_sim_normed(x1, x2):
+    return torch.dot(x1, x2)
+
+
+def test_feature_net(net, testSet, testRefSet, is_normalized=True, batchSize=1000):
+    net.eval()
+    def eval_batch_ref(last, i, batch):
+        maxSim, maxLabel, outputs1 = last
+        inputs2 = torch.Tensor(len(batch), 3, 225, 225).cuda()
+        for k, (refIm, _) in enumerate(batch):
+            inputs2[k] = refIm
+        outputs2 = net(Variable(inputs2, volatile=True)).data
+        if not is_normalized:
+            normalize_rows(outputs2, False)
+        batchMaxSim, batchMaxIdx = torch.max(torch.mm(outputs1, outputs2.t()), 1)
+        for j in range(maxSim.size(0)):
+            if (batchMaxSim[j, 0] > maxSim[j, 0]):
+                maxSim[j, 0] = batchMaxSim[j, 0]
+                maxLabel[j] = batch[batchMaxIdx[j, 0]][1]
+        return maxSim, maxLabel, outputs1
+
+    def eval_batch_test(last, i, batch):
+        correct, total = last
+        inputs1 = torch.Tensor(len(batch), 3, 225, 225).cuda()
+        for j, (testIm, _) in enumerate(batch):
+            inputs1[j] = testIm
+        outputs1 = net(Variable(inputs1, volatile=True)).data
+        if not is_normalized:
+            normalize_rows(outputs1, False)
+        # max similarity, max label, outputs
+        maxSim = torch.Tensor(len(batch), 1).cuda()
+        maxSim.fill_(-2.0)
+        init = maxSim, [None for _ in batch], outputs1
+        maxSim, maxLabel, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
+        total += len(batch)
+        correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
+        return correct, total
+
+    return fold_batches(eval_batch_test, (0, 0), testSet, batchSize)
 
 
 # get couples of images along with their label (same class or not)
@@ -57,7 +105,7 @@ def get_couples(dataset, neg_percentage=0.9):
     for (x1, l1), (x2, l2) in itertools.combinations(dataset, 2):
         if l1 != l2:
             num_neg += 1
-            couples.append(((x1, x2), -1 if cosine_dist else 0))
+            couples.append(((x1, x2), -1))
             if float(num_neg) / (num_neg + num_pos) >= neg_percentage:
                 break
     random.shuffle(couples)
@@ -71,68 +119,8 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-def testNet(net, testset_tuple, labels, batchSize=32):
-    """
-        Test the network accuracy on a testset
-        Return the number of succes and the number of evaluations done
-    """
-    net = net.eval() #set the network in eval mode
-    correct = [0]  # avoid scope issues
-    tot = [0]
-    pos_values, neg_values = [], []
 
-    def get_values(i, batch):
-        batchSize = len(batch)
-        inputs1 = torch.Tensor(batchSize,3,225,225).cuda()
-        inputs2 = torch.Tensor(batchSize,3,225,225).cuda()
-        for k in range(batchSize):
-            # get indices, then corresponding images
-            i1, i2 = batch[k][0]
-            inputs1[k] = testset_tuple[0][i1]
-            inputs2[k] = testset_tuple[1][i2]
-        get_el = None
-        comp = None
-        if cosine_dist:
-            outputs1, outputs2 = net(Variable(inputs1, volatile=True), Variable(inputs2, volatile=True))
-            values, predicted = torch.Tensor(batchSize).cuda(), torch.Tensor(batchSize).cuda()
-            for k in range(batchSize):
-                o1, o2 = outputs1.data[k], outputs2.data[k]
-                values[k] = torch.dot(o1, o2) / (o1.norm() * o2.norm())
-                predicted[k] = 1 if values[k] > cos_margin else -1
-
-            def get_el(x, i):
-                return x[i]
-
-            def comp(x1, x2):
-                return x1 * x2 > 0
-        else:
-            outputs = net(Variable(inputs1, volatile=True), Variable(inputs2, volatile=True))
-            values, predicted = torch.max(outputs.data, 1)
-
-            def get_el(x, i):
-                return x[i,0]
-
-            def comp(x1, x2):
-                return x1 == x2
-        for k in range(batchSize):
-            # if testset[i+k][1] == 1 and random.random() < 0.05:
-            #     print('pos:', get_el(predicted, k), get_el(values, k))
-            # if testset[i+k][1] != 1 and random.random() < 0.005:
-            #     print('neg:', get_el(predicted, k), get_el(values, k))
-
-            if batch[k][1] == 1:
-                pos_values.append(get_el(values, k))
-            else:
-                neg_values.append(get_el(values, k))
-            correct[0] += comp(get_el(predicted, k), batch[k][1])
-            tot[0] += 1
-
-    eval_by_batches(get_values, testset_tuple[2], batchSize)
-    print('mean pos: ', sum(pos_values) / float(len(pos_values)), 'mean neg: ', sum(neg_values) / float(len(neg_values)))
-    return correct[0], tot[0]
-
-
-def train(mymodel, trainset, testset_tuple, labels, imageTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train(mymodel, trainset, testset_tuple, labels, trainTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs :
@@ -142,23 +130,19 @@ def train(mymodel, trainset, testset_tuple, labels, imageTransform, testTransfor
             * loss function (criterion)
             * optimizer
     """
-    best = [bestScore]
     for epoch in range(epochStart, nbEpoch): # loop over the dataset multiple times
-        running_loss = [0.0]
-        batchCount = [0]
         random.shuffle(trainset)
 
-        def train_batch(i, batch):
+        def train_batch(last, i, batch):
+            batchCount, bestScore, runningLoss = last
             batchSize = len(batch)
-
             # test model every x mini-batches
-            if batchCount[0] % 100 == 0:
-                print('test :')
-                correct, tot = testNet(mymodel, testset_tuple, labels, batchSize=batchSize)
-                print("Correct : ", correct, "/", tot)
-                if (correct >= best[0]):
+            if batchCount % 50 == 0:
+                correct, tot = test_feature_net(mymodel, testset_tuple[0], testset_tuple[1])
+                print("Correct : ", correct, "/", tot, '->', float(correct) / tot)
+                if (correct > bestScore):
                     bestModel = mymodel
-                    best[0] = correct
+                    bestScore = correct
                     torch.save(bestModel, "bestModel.ckpt")
                 #else:
                 #    mymodel = best
@@ -171,8 +155,8 @@ def train(mymodel, trainset, testset_tuple, labels, imageTransform, testTransfor
             # inputs2 = torch.Tensor(batchSize,3,225,225).cuda()
             # labels = torch.LongTensor(batchSize, 1).cuda()
             # for j in range(batchSize):
-            #     inputs1[j] = imageTransform(trainset[i+j][0][0])
-            #     inputs2[j] = imageTransform(trainset[i+j][0][1])
+            #     inputs1[j] = trainTransform(trainset[i+j][0][0])
+            #     inputs2[j] = trainTransform(trainset[i+j][0][1])
             #     labels[j] = trainset[i+j][1]
             #     #get the label
             #     lab = Variable(labels[j])
@@ -188,37 +172,29 @@ def train(mymodel, trainset, testset_tuple, labels, imageTransform, testTransfor
             train_inputs1 = torch.Tensor(batchSize,3,225,225).cuda()
             train_inputs2 = torch.Tensor(batchSize,3,225,225).cuda()
             for j in range(batchSize):
-                train_inputs1[j] = imageTransform(trainset[i+j][0][0])
-                train_inputs2[j] = imageTransform(trainset[i+j][0][1])
+                train_inputs1[j] = trainTransform(batch[j][0][0])
+                train_inputs2[j] = trainTransform(batch[j][0][1])
 
-            if cosine_dist:
-                train_labels = torch.Tensor(batchSize).cuda()
-                for j in range(batchSize):
-                    train_labels[j] = trainset[i+j][1]
-            else:
-                train_labels = torch.LongTensor(batchSize).cuda()
-                for j in range(batchSize):
-                    train_labels[j] = trainset[i+j][1]
+            train_labels = torch.Tensor(batchSize).cuda()
+            for j in range(batchSize):
+                train_labels[j] = batch[j][1]
 
             # zero the parameter gradients, then forward + back prop
             optimizer.zero_grad()
-            if cosine_dist:
-                outputs1, outputs2 = mymodel(Variable(train_inputs1), Variable(train_inputs2))
-                loss = criterion(outputs1, outputs2, Variable(train_labels))
-            else:
-                outputs = mymodel(Variable(train_inputs1), Variable(train_inputs2))
-                loss = criterion(outputs, Variable(train_labels))
+            outputs1, outputs2 = mymodel(Variable(train_inputs1), Variable(train_inputs2))
+            loss = criterion(outputs1, outputs2, Variable(train_labels))
             loss.backward()
             optimizer.step()
 
             # print statistics
-            running_loss[0] += loss.data[0]
-            if batchCount[0] % 10 == 9: # print every 10 mini-batches
-                print('[%d, %5d] loss: %.3f' % (epoch+1, batchCount[0]+1, running_loss[0] / 10))
-                running_loss[0] = 0.0
+            runningLoss += loss.data[0]
+            if batchCount % 10 == 9: # print every 10 mini-batches
+                print('[%d, %5d] loss: %.3f' % (epoch+1, batchCount+1, runningLoss / 10))
+                runningLoss = 0.0
+            return batchCount + 1, bestScore, runningLoss
 
-            batchCount[0] += 1
-        eval_by_batches(train_batch, trainset, batchSize)
+        init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
+        fold_batches(train_batch, init, trainset, batchSize)
 
     print('Finished Training')
 
@@ -228,7 +204,7 @@ if __name__ == '__main__':
     # training and test sets
     trainset = ReadImages.readImageswithPattern(
         '/video/CLICIDE', lambda x: x.split('/')[-1].split('-')[0])
-    testset = ReadImages.readImageswithPattern(
+    testSetFull = ReadImages.readImageswithPattern(
         '/video/CLICIDE/test/', lambda x: x.split('/')[-1].split('-')[0])
 
     m, s = readMeanStd('data/cli.txt')
@@ -238,7 +214,9 @@ if __name__ == '__main__':
     labels = list(set(listLabel))  # we have to give a number for each label
 
     testTransform = transforms.Compose((transforms.Scale(225), transforms.CenterCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
-    imageTransform = transforms.Compose((transforms.Scale(300), transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
+    trainTransform = transforms.Compose((transforms.RandomCrop(225), transforms.ToTensor(), transforms.Normalize(m, s)))
+
+    print('Loading and transforming train/test sets. This can take a while.')
 
     # open the images
     # do that only if it fits in memory !
@@ -246,61 +224,61 @@ if __name__ == '__main__':
         trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
 
     # transform the test images already
-    testset1 = []
-    testlabels = []
-    for i in range(len(testset)):
-        if testset[i][1] in labels:
-            testset1.append(testTransform(Image.open(testset[i][0])))
-            testlabels.append(testset[i][1])
+    testSet = []
+    for i in range(len(testSetFull)):
+        if testSetFull[i][1] in labels:
+            testSet.append((testTransform(Image.open(testSetFull[i][0])), testSetFull[i][1]))
 
     # transform all training images for testset
-    testset2 = []
+    testRefSet = []
     for i in range(len(trainset)):
-        testset2.append(testTransform(trainset[i][0]))
+        testRefSet.append((testTransform(trainset[i][0]), trainset[i][1]))
 
-    # couples of indices for the testing
-    couples_test = []
-    for i in range(len(testset1)):
-        for j in range(len(testset2)):
-            couples_test.append(((i, j), 1 if testlabels[i] == trainset[j][1] else -1 if cosine_dist else 0))
-
-    # choose only x couples at random as test
-    couples_test = random.sample(couples_test, 5000)
+    # apply upscaling transform to train set already
+    # as this takes a long time
+    for i in range(len(trainset)):
+        trainset[i] = (transforms.Scale(300)(trainset[i][0]), trainset[i][1])
 
     # define the model
     # mymodel = ModelDefinition.Maxnet()
     # ModelDefinition.copyParameters(mymodel, models.alexnet(pretrained=True))
 
     couples = get_couples(trainset)
-    print('training set size: ', len(couples))
-    print('test set size: ', len(couples_test))
-    if cosine_dist:
-        criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
-    else:
-        criterion = nn.loss.CrossEntropyLoss()
+    num_train = len(couples)
+    num_pos = sum(1 for _, lab in couples if lab == 1)
+    print('training set size: ', num_train, '(pos:', num_pos, 'neg:', num_train-num_pos, ')')
+    criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
+
     if finetuning:
         # or load the model
         mymodel = Siamese1(models.alexnet(pretrained=True))
-
         mymodel.train().cuda()
 
         # define the optimizer to only the classifier with lr of 1e-2
-        optimizer = optim.SGD([
+        params = [
             {'params': mymodel.classifier.parameters()},
             {'params': mymodel.features.parameters(), 'lr': 0.0}
-        ], lr=1e-2, momentum=0.9)
+            ]
+        if mymodel.final_features:
+            params = [
+                {'params': mymodel.final_features.parameters()},
+                {'params': mymodel.classifier.parameters()},
+                {'params': mymodel.features.parameters(), 'lr': 0.0}
+                ]
+        optimizer = optim.SGD(params, lr=1e-2, momentum=0.9)
 
-        batchSize = 64
-        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        batchSize = 1024
+        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
         # define the optimizer train on all the network
-        optimizer = optim.SGD(mymodel.parameters(), lr=0.0001, momentum=0.9)
-        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        optimizer = optim.SGD(mymodel.parameters(), lr=1e-4, momentum=0.9)
+        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
     else:
-        mymodel = Siamese1(models.alexnet(pretrained=True))
+        mymodel = Siamese1(models.alexnet())
         mymodel.train().cuda()
 
         # define the optimizer to learn everything
-        optimizer = optim.SGD(mymodel.parameters(), lr=1e-4, momentum=0.9)
+        optimizer = optim.SGD(mymodel.parameters(), lr=1e-2, momentum=0.9)
 
+        batchSize = 1024
         # use the couples as train and test set
-        train(mymodel, couples, (testset1, testset2, couples_test), labels, imageTransform, testTransform, criterion, optimizer)
+        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
