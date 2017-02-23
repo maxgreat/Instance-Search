@@ -14,7 +14,7 @@ from os import path
 
 from PIL import Image
 
-from model.siamese import Siamese1, normalize_rows
+from model.siamese import Siamese1, NormalizeRows, MetricLoss
 from dataset import ReadImages
 
 # TODO create generator to yield couples of images
@@ -26,8 +26,8 @@ from dataset import ReadImages
 # train function then uses these to create batches and trains
 # batch by batch on couples/triples
 
-finetuning = False
-cos_margin = 0  # angle of 30 degrees (pi/6)
+finetuning = True
+cos_margin = math.sqrt(3) / 2  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
 
 
 # get batches of size batch_size from the set x
@@ -55,39 +55,43 @@ def cos_sim_normed(x1, x2):
 
 def test_feature_net(net, testSet, testRefSet, is_normalized=True, batchSize=1000):
     net.eval()
+    normalize_rows = NormalizeRows()
     def eval_batch_ref(last, i, batch):
-        maxSim, maxLabel, outputs1 = last
+        maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels = last
         inputs2 = torch.Tensor(len(batch), 3, 225, 225).cuda()
         for k, (refIm, _) in enumerate(batch):
             inputs2[k] = refIm
         outputs2 = net(Variable(inputs2, volatile=True)).data
         if not is_normalized:
-            normalize_rows(outputs2, False)
-        batchMaxSim, batchMaxIdx = torch.max(torch.mm(outputs1, outputs2.t()), 1)
+            outputs2 = normalize_rows(outputs2)
+        sim = torch.mm(outputs1, outputs2.t())
+        sum_pos += sum(sim[j,k] for j, testLabel in enumerate(testLabels) for k, (_, refLabel) in enumerate(batch) if testLabel == refLabel)
+        sum_neg += (sim.sum() - sum_pos)
+        batchMaxSim, batchMaxIdx = torch.max(sim, 1)
         for j in range(maxSim.size(0)):
             if (batchMaxSim[j, 0] > maxSim[j, 0]):
                 maxSim[j, 0] = batchMaxSim[j, 0]
                 maxLabel[j] = batch[batchMaxIdx[j, 0]][1]
-        return maxSim, maxLabel, outputs1
+        return maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels
 
     def eval_batch_test(last, i, batch):
-        correct, total = last
+        correct, total, sum_pos, sum_neg = last
         inputs1 = torch.Tensor(len(batch), 3, 225, 225).cuda()
         for j, (testIm, _) in enumerate(batch):
             inputs1[j] = testIm
         outputs1 = net(Variable(inputs1, volatile=True)).data
         if not is_normalized:
-            normalize_rows(outputs1, False)
+            outputs1 = normalize_rows(outputs1)
         # max similarity, max label, outputs
         maxSim = torch.Tensor(len(batch), 1).cuda()
         maxSim.fill_(-2.0)
-        init = maxSim, [None for _ in batch], outputs1
-        maxSim, maxLabel, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
+        init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [x[1] for x in batch]
+        maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
         total += len(batch)
         correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
-        return correct, total
+        return correct, total, sum_pos, sum_neg
 
-    return fold_batches(eval_batch_test, (0, 0), testSet, batchSize)
+    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0), testSet, batchSize)
 
 
 # get couples of images along with their label (same class or not)
@@ -138,8 +142,11 @@ def train(mymodel, trainset, testset_tuple, labels, trainTransform, testTransfor
             batchSize = len(batch)
             # test model every x mini-batches
             if batchCount % 50 == 0:
-                correct, tot = test_feature_net(mymodel, testset_tuple[0], testset_tuple[1])
-                print("Correct : ", correct, "/", tot, '->', float(correct) / tot)
+                testSet, testRefSet = testset_tuple
+                correct, tot, sum_pos, sum_neg = test_feature_net(mymodel, testSet, testRefSet)
+                num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
+                num_neg = len(testSet) * len(testRefSet) - num_pos
+                print("Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
                 if (correct > bestScore):
                     bestModel = mymodel
                     bestScore = correct
@@ -247,31 +254,26 @@ if __name__ == '__main__':
     num_train = len(couples)
     num_pos = sum(1 for _, lab in couples if lab == 1)
     print('training set size: ', num_train, '(pos:', num_pos, 'neg:', num_train-num_pos, ')')
-    criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
+    criterion = MetricLoss()
 
     if finetuning:
         # or load the model
-        mymodel = Siamese1(models.alexnet(pretrained=True))
+        mymodel = Siamese1(models.alexnet(pretrained=True), feature_dim=0)
         mymodel.train().cuda()
 
         # define the optimizer to only the classifier with lr of 1e-2
         params = [
+            {'params': mymodel.final_features.parameters()},
             {'params': mymodel.classifier.parameters()},
             {'params': mymodel.features.parameters(), 'lr': 0.0}
-            ]
-        if mymodel.final_features:
-            params = [
-                {'params': mymodel.final_features.parameters()},
-                {'params': mymodel.classifier.parameters()},
-                {'params': mymodel.features.parameters(), 'lr': 0.0}
-                ]
+        ]
         optimizer = optim.SGD(params, lr=1e-2, momentum=0.9)
 
-        batchSize = 1024
-        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        batchSize = 128
+        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
         # define the optimizer train on all the network
         optimizer = optim.SGD(mymodel.parameters(), lr=1e-4, momentum=0.9)
-        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
+        train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
     else:
         mymodel = Siamese1(models.alexnet())
         mymodel.train().cuda()
@@ -279,6 +281,6 @@ if __name__ == '__main__':
         # define the optimizer to learn everything
         optimizer = optim.SGD(mymodel.parameters(), lr=1e-2, momentum=0.9)
 
-        batchSize = 1024
+        batchSize = 128
         # use the couples as train and test set
         train(mymodel, couples, (testSet, testRefSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize)
