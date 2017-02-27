@@ -1,5 +1,4 @@
-
-# coding: utf-8
+# -*- encoding: utf-8 -*-
 
 import torch
 import torch.nn as nn
@@ -8,23 +7,83 @@ from torch.autograd import Function
 import numpy as np
 
 
-class NormalizeRows(Function):
+# autograd function to normalize an input over the rows
+# (each vector of a batch is normalized)
+# the backward step follows the implementation of
+# torch.legacy.nn.Normalize closely
+class Normalize2DL2(Function):
+
+    def __init__(self, eps=1e-10):
+        super(Normalize2DL2, self).__init__()
+        self.eps = eps
 
     def forward(self, input):
-        self.buf = input.clone().norm(2, 1).expand_as(input)
-        return input / self.buf
+        self.norm2 = input.pow(2).sum(1).add_(self.eps)
+        self.norm = self.norm2.pow(0.5)
+        output = input / self.norm.expand_as(input)
+        self.save_for_backward(input)
+        return output
 
     def backward(self, grad_output):
-        return grad_output / self.buf
+        input = self.saved_tensors[0]
+        gradInput = self.norm2.expand_as(input) * grad_output
+        cross = (input * grad_output).sum(1)
+        buf = input * cross.expand_as(input)
+        gradInput.add_(-1, buf)
+        cross = self.norm2 * self.norm
+        gradInput.div_(cross.expand_as(gradInput))
+        return gradInput
 
 
-class NormalizeRowsModule(nn.Module):
+class NormalizeL2(nn.Module):
 
     def __init__(self):
-        super(NormalizeRowsModule, self).__init__()
+        super(NormalizeL2, self).__init__()
 
     def forward(self, input):
-        return NormalizeRows()(input)
+        return Normalize2DL2()(input)
+
+
+class TuneClassif(nn.Module):
+    """
+        Image classification network based on a pretrained network
+        which is then finetuned to a different dataset
+        It's assumed that the last layer of the given network
+        is a fully connected (linear) one
+    """
+
+    def __init__(self, net, num_classes, untrained_layers=2):
+        super(TuneClassif, self).__init__()
+        self.features = net.features
+        self.classifier = net.classifier
+        # make sure we never retrain the first few layers
+        # this is usually not needed
+        n_features = 0
+        for module in self.features:
+            if n_features >= untrained_layers:
+                break
+            if sum(1 for _ in module.parameters()) > 0:
+                n_features += 1
+                for p in module.parameters():
+                    p.requires_grad = False
+        n_class = 0
+        for module in self.classifier:
+            if n_class + n_features >= untrained_layers:
+                break
+            if sum(1 for _ in module.parameters()) > 0:
+                n_class += 1
+                for p in module.parameters():
+                    p.requires_grad = False
+
+        for name, module in self.classifier._modules.items():
+            if module is net.classifier[len(net.classifier._modules) - 1]:
+                self.classifier._modules[name] = nn.Linear(module.in_features, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
 
 
 class Siamese1(nn.Module):
@@ -32,24 +91,39 @@ class Siamese1(nn.Module):
         Define a siamese network
         Given a module, it will duplicate it with weight sharing, concatenate the output and add a linear classifier
     """
-    def __init__(self, net, feature_dim=100):
+    def __init__(self, net, num_classes=100, feature_dim=100):
         super(Siamese1, self).__init__()
         self.features = net.features
-        self.classifier = net.classifier
+        for module in self.features:
+            if hasattr(module, 'out_channels'):
+                in_features = module.out_channels
         if feature_dim <= 0:
-            self.final_features = NormalizeRowsModule()
+            for module in net.classifier:
+                if isinstance(module, nn.modules.linear.Linear):
+                    out_features = module.out_features
         else:
-            self.final_features = nn.Sequential(
-                NormalizeRowsModule(),
-                nn.Linear(net.classifier[len(net.classifier._modules)-1].out_features, feature_dim),
-                NormalizeRowsModule()
-            )
+            out_features = feature_dim
+        # TODO region of interest pooling
+        self.pooling = nn.AvgPool2d(6)
+        self.feature_reduc = nn.Sequential(
+            nn.Linear(in_features, out_features),
+            NormalizeL2()
+        )
+        # self.classifier = net.classifier
+        # if feature_dim <= 0:
+        #     self.feature_reduc = NormalizeL2()
+        # else:
+        #     self.feature_reduc = nn.Sequential(
+        #         NormalizeL2(),
+        #         nn.Linear(net.classifier[len(net.classifier._modules) - 1].out_features, feature_dim),
+        #         NormalizeL2()
+        #     )
 
     def forward_single(self, x):
         x = self.features(x)
+        x = self.pooling(x)
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        x = self.final_features(x)
+        x = self.feature_reduc(x)
         return x
 
     def forward(self, x1, x2=None):
@@ -58,7 +132,6 @@ class Siamese1(nn.Module):
         else:
             return self.forward_single(x1)
 
-# In[39]:
 
 def siamese1():
     return Siamese1(models.alexnet(pretrained=True))
