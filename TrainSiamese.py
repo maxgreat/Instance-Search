@@ -162,7 +162,7 @@ def train_classif(net, trainSet, testSet, labels, trainTransform, criterion, opt
             running_loss = 0.0
 
         if batchCount % 50 == 49:  # test every x mini-batches
-            bestScore = test_print_classif(net, testSet, labels, bestScore, saveDir, epoch)
+            bestScore = test_print_classif(net, testSet, labels, bestScore, saveDir, epoch + 1)
         return batchCount + 1, bestScore, running_loss
 
     for epoch in range(epochStart, nbEpoch):  # loop over the dataset multiple times
@@ -198,29 +198,43 @@ def test_descriptor_net(net, testSet, testRefSet, testTransform, batchSize, is_n
         return maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels
 
     def eval_batch_test(last, i, batch):
-        correct, total, sum_pos, sum_neg = last
-        inputs1 = torch.Tensor(len(batch), 3, 227, 227).cuda()
+        correct, total, sum_pos, sum_neg, lab_dict = last
+        inputs1 = torch.Tensor(len(batch) * net.num_regions, 3, 227, 227).cuda()
         for j, (testIm, _) in enumerate(batch):
-            inputs1[j] = testIm
+            for l in range(net.num_regions):
+                inputs1[j * net.num_regions + l] = testTransform(testIm)
         outputs1 = net(Variable(inputs1, volatile=True)).data
         if not is_normalized:
             outputs1 = normalize_rows(outputs1)
         # max similarity, max label, outputs
-        maxSim = torch.Tensor(len(batch), 1).cuda()
-        maxSim.fill_(-2.0)
-        init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [x[1] for x in batch]
+        maxSim = torch.Tensor(len(batch), 1).fill_(-2).cuda()
+        init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [lab for im, lab in batch]
         maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
+        for j, (_, lab) in enumerate(batch):
+            lab_dict[lab].append((maxLabel[j], 1))
         total += len(batch)
         correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
-        return correct, total, sum_pos, sum_neg
+        return correct, total, sum_pos, sum_neg, lab_dict
 
-    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0), testSet, batchSize)
+    lab_dict = dict([(lab, []) for _, lab in testSet])
+    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0, lab_dict), testSet, batchSize)
 
 
-def test_siamese_print(net, testset_tuple, testTransform, batchSize, bestScore=0, saveDir='data/', epoch=0):
+def test_print_siamese(net, testset_tuple, testTransform, batchSize, bestScore=0, saveDir='data/', epoch=0):
     testSet, testRefSet = testset_tuple
     net.eval()
-    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, testSet, testRefSet, testTransform, batchSize)
+    correct, tot, sum_pos, sum_neg, lab_dict = test_descriptor_net(net, testSet, testRefSet, testTransform, batchSize)
+    for lab in lab_dict:
+        def red_f(x, y):
+            return x[0], x[1] + y[1]
+        L = sorted(lab_dict[lab], key=lambda x: x[0])
+        g = itertools.groupby(L, key=lambda x: x[0])
+        red = [reduce(red_f, group) for _, group in g]
+        lab_dict[lab] = sorted(red, key=lambda x: -x[1])
+    f = open(saveDir + 'lab_dict_' + str(epoch) + '.txt', 'w')
+    for lab in lab_dict:
+        f.write(str(lab) + ':' + str(lab_dict[lab]) + '\n')
+    f.close()
     num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
     num_neg = len(testSet) * len(testRefSet) - num_pos
     print("TEST SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
@@ -234,7 +248,7 @@ def test_siamese_print(net, testset_tuple, testTransform, batchSize, bestScore=0
 
     # training set accuracy
     trainTestSet = testRefSet[:200]
-    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, trainTestSet, testRefSet, testTransform, batchSize)
+    correct, tot, sum_pos, sum_neg, _ = test_descriptor_net(net, trainTestSet, testRefSet, testTransform, batchSize)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
     print("TRAIN SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
@@ -284,7 +298,7 @@ def train_siamese(net, trainSet, testset_tuple, labels, trainTransform, testTran
             runningLoss = 0.0
         # test model every x mini-batches
         if batchCount % 50 == 49:
-            bestScore = test_siamese_print(net, testset_tuple, testTransform, batchSize, bestScore, saveDir, epoch)
+            bestScore = test_print_siamese(net, testset_tuple, testTransform, batchSize, bestScore, saveDir, epoch + 1)
         return batchCount + 1, bestScore, runningLoss
 
     # loop over the dataset multiple times
@@ -341,10 +355,10 @@ if __name__ == '__main__':
     couples = get_couples(trainSet)
     num_train = len(couples)
     num_pos = sum(1 for _, lab in couples if lab == 1)
-    print('training set size: ', num_train, '(pos:', num_pos, 'neg:', num_train - num_pos, ')')
+    print('training set size: ', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
 
     if finetuning:
-        class_net = TuneClassif(models.alexnet(pretrained=True), len(labels))
+        class_net = TuneClassif(models.alexnet(pretrained=True), len(labels), untrained_layers=-1)
         lr = 1e-3
     else:
         class_net = models.alexnet()
@@ -354,13 +368,13 @@ if __name__ == '__main__':
     criterion = nn.loss.CrossEntropyLoss()
     test_print_classif(class_net, testSetClassif, labels)
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainSet, testSetClassif, labels, trainTransform, criterion, optimizer, nbEpoch=5)
+    train_classif(class_net, trainSet, testSetClassif, labels, trainTransform, criterion, optimizer, nbEpoch=0)
 
     net = Siamese1(class_net, feature_dim=0)
     net.train().cuda()
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=1e-3, momentum=0.9)
     criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
-    batchSize = 256
-    test_siamese_print(net, (testSet, trainSet), testTransform, batchSize)
+    batchSize = 64
+    test_print_siamese(net, (testSet, trainSet), testTransform, batchSize)
     train_siamese(net, couples, (testSet, trainSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
