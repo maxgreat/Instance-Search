@@ -81,6 +81,14 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
+# pad a PIL image to a square
+def pad_square(img):
+    longer_side = max(img.size)
+    h_pad = (longer_side - img.size[0]) / 2
+    v_pad = (longer_side - img.size[1]) / 2
+    return img.crop((-h_pad, -v_pad, img.size[0] + h_pad, img.size[1] + v_pad))
+
+
 # test a classifier model. it should be in eval mode
 def test_classif_net(net, testSet, labels, batchSize):
     """
@@ -116,11 +124,11 @@ def test_print_classif(net, testSet, labels, bestScore=0, saveDir='data/', epoch
     return bestScore
 
 
-def train_classif(net, trainset, testSet, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train_classif(net, trainSet, testSet, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs :
-            * trainset
+            * trainSet
             * testSet,
             * transformations to apply to image (for train)
             * loss function (criterion)
@@ -159,22 +167,23 @@ def train_classif(net, trainset, testSet, labels, trainTransform, criterion, opt
 
     for epoch in range(epochStart, nbEpoch):  # loop over the dataset multiple times
         init = 0, bestScore, 0.0
-        random.shuffle(trainset)
-        fold_batches(train_batch, init, trainset, batchSize)
+        random.shuffle(trainSet)
+        fold_batches(train_batch, init, trainSet, batchSize)
     print('Finished classification training')
 
 
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (not the average precision/ranking on the ref set). TODO
-def test_descriptor_net(net, testSet, testRefSet, batchSize, is_normalized=True):
+def test_descriptor_net(net, testSet, testRefSet, testTransform, batchSize, is_normalized=True):
     normalize_rows = Normalize2DL2()
 
     def eval_batch_ref(last, i, batch):
         maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels = last
-        inputs2 = torch.Tensor(len(batch), 3, 227, 227).cuda()
+        inputs2 = torch.Tensor(len(batch) * net.num_regions, 3, 227, 227).cuda()
         for k, (refIm, _) in enumerate(batch):
-            inputs2[k] = refIm
+            for l in range(net.num_regions):
+                inputs2[k * net.num_regions + l] = testTransform(refIm)
         outputs2 = net(Variable(inputs2, volatile=True)).data
         if not is_normalized:
             outputs2 = normalize_rows(outputs2)
@@ -208,10 +217,10 @@ def test_descriptor_net(net, testSet, testRefSet, batchSize, is_normalized=True)
     return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0), testSet, batchSize)
 
 
-def test_siamese_print(net, testset_tuple, batchSize, bestScore=0, saveDir='data/', epoch=0):
+def test_siamese_print(net, testset_tuple, testTransform, batchSize, bestScore=0, saveDir='data/', epoch=0):
     testSet, testRefSet = testset_tuple
     net.eval()
-    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, testSet, testRefSet, batchSize)
+    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, testSet, testRefSet, testTransform, batchSize)
     num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
     num_neg = len(testSet) * len(testRefSet) - num_pos
     print("TEST SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
@@ -225,7 +234,7 @@ def test_siamese_print(net, testset_tuple, batchSize, bestScore=0, saveDir='data
 
     # training set accuracy
     trainTestSet = testRefSet[:200]
-    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, trainTestSet, testRefSet, batchSize)
+    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, trainTestSet, testRefSet, testTransform, batchSize)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
     print("TRAIN SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
@@ -233,11 +242,11 @@ def test_siamese_print(net, testset_tuple, batchSize, bestScore=0, saveDir='data
     return bestScore
 
 
-def train_siamese(net, trainset, testset_tuple, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train_siamese(net, trainSet, testset_tuple, labels, trainTransform, testTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs :
-            * trainset
+            * trainSet
             * testSet,
             * transformations to apply to image (for train and for test)
             * loss function (criterion)
@@ -252,12 +261,13 @@ def train_siamese(net, trainset, testset_tuple, labels, trainTransform, criterio
 
         # get the inputs
         n = len(batch)
-        train_inputs1 = torch.Tensor(n, 3, 227, 227).cuda()
-        train_inputs2 = torch.Tensor(n, 3, 227, 227).cuda()
+        train_inputs1 = torch.Tensor(n * net.num_regions, 3, 227, 227).cuda()
+        train_inputs2 = torch.Tensor(n * net.num_regions, 3, 227, 227).cuda()
         train_labels = torch.Tensor(n).cuda()
         for j, ((im1, im2), lab) in enumerate(batch):
-            train_inputs1[j] = trainTransform(im1)
-            train_inputs2[j] = trainTransform(im2)
+            for k in range(net.num_regions):
+                train_inputs1[j * net.num_regions + k] = trainTransform(im1)
+                train_inputs2[j * net.num_regions + k] = trainTransform(im2)
             train_labels[j] = lab
 
         # zero the parameter gradients, then forward + back prop
@@ -274,57 +284,61 @@ def train_siamese(net, trainset, testset_tuple, labels, trainTransform, criterio
             runningLoss = 0.0
         # test model every x mini-batches
         if batchCount % 50 == 49:
-            bestScore = test_siamese_print(net, testset_tuple, batchSize, bestScore, saveDir, epoch)
+            bestScore = test_siamese_print(net, testset_tuple, testTransform, batchSize, bestScore, saveDir, epoch)
         return batchCount + 1, bestScore, runningLoss
 
     # loop over the dataset multiple times
     for epoch in range(epochStart, nbEpoch):
-        random.shuffle(trainset)
+        random.shuffle(trainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
-        fold_batches(train_batch, init, trainset, batchSize)
+        fold_batches(train_batch, init, trainSet, batchSize)
 
     print('Finished descriptor training')
 
 
 if __name__ == '__main__':
 
-    # training and test sets
     def match(x):
         return x.split('/')[-1].split('-')[0]
-    trainset = ReadImages.readImageswithPattern(
-        'data/pre_proc/' + used_dataset, match)
+    # training and test sets (scaled to 300 on the small side)
+    trainSet = ReadImages.readImageswithPattern(
+        'data/pre_proc/' + used_dataset + '_300', match)
     testSetFull = ReadImages.readImageswithPattern(
-        '/video/' + used_dataset + '/test/', match)
+        'data/pre_proc/' + used_dataset + '_300/test', match)
 
     m, s = readMeanStd('data/' + ('cli.txt' if used_dataset == 'CLICIDE' else 'fou.txt'))
 
     # define the labels list
-    listLabel = [t[1] for t in trainset if 'wall' not in t[1]]
+    listLabel = [t[1] for t in trainSet if 'wall' not in t[1]]
     labels = list(set(listLabel))  # we have to give a number for each label
 
-    testTransform = transforms.Compose((transforms.Scale(227), transforms.CenterCrop(227), transforms.ToTensor(), transforms.Normalize(m, s)))
-    # upscaling was already applied in train set
+    # scaling was already applied to train/test sets (small side 300)
+    testClassifTrans = transforms.Compose((pad_square, transforms.Scale(227), transforms.ToTensor(), transforms.Normalize(m, s)))
+    testTransform = transforms.Compose((transforms.RandomCrop(227), transforms.ToTensor(), transforms.Normalize(m, s)))
     trainTransform = transforms.Compose((transforms.RandomCrop(227), transforms.ToTensor(), transforms.Normalize(m, s)))
 
-    print('Loading and transforming train/test sets. This can take a while.')
-
+    print('Loading and transforming train/test sets.')
     # open the images
     # do that only if it fits in memory !
-    for i in range(len(trainset)):
-        trainset[i] = (Image.open(trainset[i][0]), trainset[i][1])
+    for i, (im, lab) in enumerate(trainSet):
+        trainSet[i] = (Image.open(im), lab)
 
-    # transform the test images already
+    # transform the test images already (if possible)
     testSet = []
-    for i in range(len(testSetFull)):
-        if testSetFull[i][1] in labels:
-            testSet.append((testTransform(Image.open(testSetFull[i][0])), testSetFull[i][1]))
+    for im, lab in testSetFull:
+        if lab in labels:
+            testSet.append((Image.open(im), lab))
+
+    testSetClassif = []
+    for im, lab in testSet:
+        testSetClassif.append((testClassifTrans(im), lab))
 
     # transform all training images for testSet
-    testRefSet = []
-    for i in range(len(trainset)):
-        testRefSet.append((testTransform(trainset[i][0]), trainset[i][1]))
+    # testRefSet = []
+    # for i in range(len(trainSet)):
+    #     testRefSet.append((transforms.Scale(227)(trainSet[i][0]), trainSet[i][1]))
 
-    couples = get_couples(trainset)
+    couples = get_couples(trainSet)
     num_train = len(couples)
     num_pos = sum(1 for _, lab in couples if lab == 1)
     print('training set size: ', num_train, '(pos:', num_pos, 'neg:', num_train - num_pos, ')')
@@ -338,9 +352,9 @@ if __name__ == '__main__':
     class_net.train().cuda()
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=lr, momentum=0.9, weight_decay=5e-4)
     criterion = nn.loss.CrossEntropyLoss()
-    test_print_classif(class_net, testSet, labels)
+    test_print_classif(class_net, testSetClassif, labels)
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainset, testSet, labels, trainTransform, criterion, optimizer, nbEpoch=5)
+    train_classif(class_net, trainSet, testSetClassif, labels, trainTransform, criterion, optimizer, nbEpoch=5)
 
     net = Siamese1(class_net, feature_dim=0)
     net.train().cuda()
@@ -348,5 +362,5 @@ if __name__ == '__main__':
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=1e-3, momentum=0.9)
     criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
     batchSize = 256
-    test_siamese_print(net, (testSet, testRefSet), batchSize)
-    train_siamese(net, couples, (testSet, testRefSet), labels, trainTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
+    test_siamese_print(net, (testSet, trainSet), testTransform, batchSize)
+    train_siamese(net, couples, (testSet, trainSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)

@@ -91,8 +91,9 @@ class Siamese1(nn.Module):
         Define a siamese network
         Given a module, it will duplicate it with weight sharing, concatenate the output and add a linear classifier
     """
-    def __init__(self, net, num_classes=100, feature_dim=100):
+    def __init__(self, net, num_regions=10, num_classes=100, feature_dim=100):
         super(Siamese1, self).__init__()
+        self.num_regions = num_regions
         self.features = net.features
         for module in self.features:
             if hasattr(module, 'out_channels'):
@@ -104,9 +105,13 @@ class Siamese1(nn.Module):
         else:
             out_features = feature_dim
         # TODO region of interest pooling
-        self.pooling = nn.AvgPool2d(6)
+        self.feature_pooling = nn.AvgPool2d(6)
         self.feature_reduc = nn.Sequential(
             nn.Linear(in_features, out_features),
+            NormalizeL2()
+        )
+        self.region_pooling = nn.Sequential(
+            nn.AvgPool1d(num_regions),
             NormalizeL2()
         )
         # self.classifier = net.classifier
@@ -121,9 +126,12 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
-        x = self.pooling(x)
+        x = self.feature_pooling(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc(x)
+        x = x.view(x.size(0) / self.num_regions, self.num_regions, -1)
+        x = x.transpose(1, 2)
+        x = self.region_pooling(x)
         return x
 
     def forward(self, x1, x2=None):
