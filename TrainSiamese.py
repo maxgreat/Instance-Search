@@ -25,9 +25,6 @@ from dataset import ReadImages
 # TODO it seems like naive generator does not work at all
 # should train with 'difficult' examples first
 
-# train function then uses these to create batches and trains
-# batch by batch on couples/triples
-
 used_dataset = 'fourviere'
 finetuning = True
 cos_margin = math.sqrt(0) / 2  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
@@ -54,70 +51,6 @@ def cos_sim(x1, x2):
 # cosine similarity for normed inputs
 def cos_sim_normed(x1, x2):
     return torch.dot(x1, x2)
-
-
-# test a classifier model. it should be in eval mode
-def test_classif_net(net, testSet, labels, batchSize):
-    """
-        Test the network accuracy on a testSet
-        Return the number of succes and the number of evaluations done
-    """
-    def eval_batch_test(last, i, batch):
-        correct, total = last
-        inputs = torch.Tensor(len(batch), 3, 227, 227).cuda()
-        for j, (testIm, _) in enumerate(batch):
-            inputs[j] = testIm
-        outputs = net(Variable(inputs, volatile=True)).data
-        _, predicted = torch.max(outputs, 1)
-        total += len(batch)
-        correct += sum(labels.index(testLabel) == predicted[j][0] for j, (_, testLabel) in enumerate(batch))
-        return correct, total
-
-    return fold_batches(eval_batch_test, (0, 0), testSet, batchSize)
-
-
-# accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
-# the model should be in eval mode
-# for each pair of images, this only considers the maximal similarity (not the average precision/ranking on the ref set). TODO
-def test_feature_net(net, testSet, testRefSet, batchSize, is_normalized=True):
-    normalize_rows = Normalize2DL2()
-
-    def eval_batch_ref(last, i, batch):
-        maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels = last
-        inputs2 = torch.Tensor(len(batch), 3, 227, 227).cuda()
-        for k, (refIm, _) in enumerate(batch):
-            inputs2[k] = refIm
-        outputs2 = net(Variable(inputs2, volatile=True)).data
-        if not is_normalized:
-            outputs2 = normalize_rows(outputs2)
-        sim = torch.mm(outputs1, outputs2.t())
-        sum_pos += sum(sim[j, k] for j, testLabel in enumerate(testLabels) for k, (_, refLabel) in enumerate(batch) if testLabel == refLabel)
-        sum_neg += (sim.sum() - sum_pos)
-        batchMaxSim, batchMaxIdx = torch.max(sim, 1)
-        for j in range(maxSim.size(0)):
-            if (batchMaxSim[j, 0] > maxSim[j, 0]):
-                maxSim[j, 0] = batchMaxSim[j, 0]
-                maxLabel[j] = batch[batchMaxIdx[j, 0]][1]
-        return maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels
-
-    def eval_batch_test(last, i, batch):
-        correct, total, sum_pos, sum_neg = last
-        inputs1 = torch.Tensor(len(batch), 3, 227, 227).cuda()
-        for j, (testIm, _) in enumerate(batch):
-            inputs1[j] = testIm
-        outputs1 = net(Variable(inputs1, volatile=True)).data
-        if not is_normalized:
-            outputs1 = normalize_rows(outputs1)
-        # max similarity, max label, outputs
-        maxSim = torch.Tensor(len(batch), 1).cuda()
-        maxSim.fill_(-2.0)
-        init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [x[1] for x in batch]
-        maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
-        total += len(batch)
-        correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
-        return correct, total, sum_pos, sum_neg
-
-    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0), testSet, batchSize)
 
 
 # get couples of images along with their label (same class or not)
@@ -148,82 +81,24 @@ def readMeanStd(fname='data/cli.txt'):
     return mean, std
 
 
-def test_print(net, testset_tuple, batchSize, bestScore=0, saveDir='data/', epoch=0):
-    testSet, testRefSet = testset_tuple
-    net.eval()
-    correct, tot, sum_pos, sum_neg = test_feature_net(net, testSet, testRefSet, batchSize)
-    num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
-    num_neg = len(testSet) * len(testRefSet) - num_pos
-    print("TEST SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
-    if (correct > bestScore):
-        bestModel = net
-        bestScore = correct
-        torch.save(bestModel, "bestModel.ckpt")
-    # else:
-    #    net = best
-    torch.save(net, path.join(saveDir, "model-" + str(epoch) + ".ckpt"))
-
-    # training set accuracy
-    trainTestSet = testRefSet[:200]
-    correct, tot, sum_pos, sum_neg = test_feature_net(net, trainTestSet, testRefSet, batchSize)
-    num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
-    num_neg = len(trainTestSet) * len(testRefSet) - num_pos
-    print("TRAIN SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
-    net.train()
-    return bestScore
-
-
-def train(net, trainset, testset_tuple, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+# test a classifier model. it should be in eval mode
+def test_classif_net(net, testSet, labels, batchSize):
     """
-        Train a network
-        inputs :
-            * trainset
-            * testSet,
-            * transformations to apply to image (for train and for test)
-            * loss function (criterion)
-            * optimizer
+        Test the network accuracy on a testSet
+        Return the number of succes and the number of evaluations done
     """
-    def train_batch(last, i, batch):
-        batchCount, bestScore, runningLoss = last
+    def eval_batch_test(last, i, batch):
+        correct, total = last
+        inputs = torch.Tensor(len(batch), 3, 227, 227).cuda()
+        for j, (testIm, _) in enumerate(batch):
+            inputs[j] = testIm
+        outputs = net(Variable(inputs, volatile=True)).data
+        _, predicted = torch.max(outputs, 1)
+        total += len(batch)
+        correct += sum(labels.index(testLabel) == predicted[j][0] for j, (_, testLabel) in enumerate(batch))
+        return correct, total
 
-        # using sub-batches (only pairs with biggest loss)
-        # losses = []
-        # TODO
-
-        # get the inputs
-        n = len(batch)
-        train_inputs1 = torch.Tensor(n, 3, 227, 227).cuda()
-        train_inputs2 = torch.Tensor(n, 3, 227, 227).cuda()
-        train_labels = torch.Tensor(n).cuda()
-        for j, ((im1, im2), lab) in enumerate(batch):
-            train_inputs1[j] = trainTransform(im1)
-            train_inputs2[j] = trainTransform(im2)
-            train_labels[j] = lab
-
-        # zero the parameter gradients, then forward + back prop
-        optimizer.zero_grad()
-        outputs1, outputs2 = net(Variable(train_inputs1), Variable(train_inputs2))
-        loss = criterion(outputs1, outputs2, Variable(train_labels))
-        loss.backward()
-        optimizer.step()
-
-        # print statistics
-        runningLoss += loss.data[0]
-        if batchCount % 10 == 9:  # print every 10 mini-batches
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, runningLoss / 10))
-            runningLoss = 0.0
-        # test model every x mini-batches
-        if batchCount % 50 == 49:
-            bestScore = test_print(net, testset_tuple, batchSize, bestScore, saveDir, epoch)
-        return batchCount + 1, bestScore, runningLoss
-
-    # loop over the dataset multiple times
-    for epoch in range(epochStart, nbEpoch):
-        random.shuffle(trainset)
-        init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
-        fold_batches(train_batch, init, trainset, batchSize)
-
-    print('Finished descriptor training')
+    return fold_batches(eval_batch_test, (0, 0), testSet, batchSize)
 
 
 def test_print_classif(net, testSet, labels, bestScore=0, saveDir='data/', epoch=0, batchSize=1000):
@@ -289,6 +164,128 @@ def train_classif(net, trainset, testSet, labels, trainTransform, criterion, opt
     print('Finished classification training')
 
 
+# accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
+# the model should be in eval mode
+# for each pair of images, this only considers the maximal similarity (not the average precision/ranking on the ref set). TODO
+def test_descriptor_net(net, testSet, testRefSet, batchSize, is_normalized=True):
+    normalize_rows = Normalize2DL2()
+
+    def eval_batch_ref(last, i, batch):
+        maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels = last
+        inputs2 = torch.Tensor(len(batch), 3, 227, 227).cuda()
+        for k, (refIm, _) in enumerate(batch):
+            inputs2[k] = refIm
+        outputs2 = net(Variable(inputs2, volatile=True)).data
+        if not is_normalized:
+            outputs2 = normalize_rows(outputs2)
+        sim = torch.mm(outputs1, outputs2.t())
+        sum_pos += sum(sim[j, k] for j, testLabel in enumerate(testLabels) for k, (_, refLabel) in enumerate(batch) if testLabel == refLabel)
+        sum_neg += (sim.sum() - sum_pos)
+        batchMaxSim, batchMaxIdx = torch.max(sim, 1)
+        for j in range(maxSim.size(0)):
+            if (batchMaxSim[j, 0] > maxSim[j, 0]):
+                maxSim[j, 0] = batchMaxSim[j, 0]
+                maxLabel[j] = batch[batchMaxIdx[j, 0]][1]
+        return maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels
+
+    def eval_batch_test(last, i, batch):
+        correct, total, sum_pos, sum_neg = last
+        inputs1 = torch.Tensor(len(batch), 3, 227, 227).cuda()
+        for j, (testIm, _) in enumerate(batch):
+            inputs1[j] = testIm
+        outputs1 = net(Variable(inputs1, volatile=True)).data
+        if not is_normalized:
+            outputs1 = normalize_rows(outputs1)
+        # max similarity, max label, outputs
+        maxSim = torch.Tensor(len(batch), 1).cuda()
+        maxSim.fill_(-2.0)
+        init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [x[1] for x in batch]
+        maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, batchSize)
+        total += len(batch)
+        correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
+        return correct, total, sum_pos, sum_neg
+
+    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0), testSet, batchSize)
+
+
+def test_siamese_print(net, testset_tuple, batchSize, bestScore=0, saveDir='data/', epoch=0):
+    testSet, testRefSet = testset_tuple
+    net.eval()
+    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, testSet, testRefSet, batchSize)
+    num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
+    num_neg = len(testSet) * len(testRefSet) - num_pos
+    print("TEST SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
+    if (correct > bestScore):
+        bestModel = net
+        bestScore = correct
+        torch.save(bestModel, "bestModel.ckpt")
+    # else:
+    #    net = best
+    torch.save(net, path.join(saveDir, "model-" + str(epoch) + ".ckpt"))
+
+    # training set accuracy
+    trainTestSet = testRefSet[:200]
+    correct, tot, sum_pos, sum_neg = test_descriptor_net(net, trainTestSet, testRefSet, batchSize)
+    num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
+    num_neg = len(trainTestSet) * len(testRefSet) - num_pos
+    print("TRAIN SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
+    net.train()
+    return bestScore
+
+
+def train_siamese(net, trainset, testset_tuple, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+    """
+        Train a network
+        inputs :
+            * trainset
+            * testSet,
+            * transformations to apply to image (for train and for test)
+            * loss function (criterion)
+            * optimizer
+    """
+    def train_batch(last, i, batch):
+        batchCount, bestScore, runningLoss = last
+
+        # using sub-batches (only pairs with biggest loss)
+        # losses = []
+        # TODO
+
+        # get the inputs
+        n = len(batch)
+        train_inputs1 = torch.Tensor(n, 3, 227, 227).cuda()
+        train_inputs2 = torch.Tensor(n, 3, 227, 227).cuda()
+        train_labels = torch.Tensor(n).cuda()
+        for j, ((im1, im2), lab) in enumerate(batch):
+            train_inputs1[j] = trainTransform(im1)
+            train_inputs2[j] = trainTransform(im2)
+            train_labels[j] = lab
+
+        # zero the parameter gradients, then forward + back prop
+        optimizer.zero_grad()
+        outputs1, outputs2 = net(Variable(train_inputs1), Variable(train_inputs2))
+        loss = criterion(outputs1, outputs2, Variable(train_labels))
+        loss.backward()
+        optimizer.step()
+
+        # print statistics
+        runningLoss += loss.data[0]
+        if batchCount % 10 == 9:  # print every 10 mini-batches
+            print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, runningLoss / 10))
+            runningLoss = 0.0
+        # test model every x mini-batches
+        if batchCount % 50 == 49:
+            bestScore = test_siamese_print(net, testset_tuple, batchSize, bestScore, saveDir, epoch)
+        return batchCount + 1, bestScore, runningLoss
+
+    # loop over the dataset multiple times
+    for epoch in range(epochStart, nbEpoch):
+        random.shuffle(trainset)
+        init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
+        fold_batches(train_batch, init, trainset, batchSize)
+
+    print('Finished descriptor training')
+
+
 if __name__ == '__main__':
 
     # training and test sets
@@ -351,5 +348,5 @@ if __name__ == '__main__':
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=1e-3, momentum=0.9)
     criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
     batchSize = 256
-    test_print(net, (testSet, testRefSet), batchSize)
-    train(net, couples, (testSet, testRefSet), labels, trainTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
+    test_siamese_print(net, (testSet, testRefSet), batchSize)
+    train_siamese(net, couples, (testSet, testRefSet), labels, trainTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=1)
