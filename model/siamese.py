@@ -93,13 +93,11 @@ class Siamese1(nn.Module):
         Define a siamese network
         Given a module, it will duplicate it with weight sharing, concatenate the output and add a linear classifier
     """
-    def __init__(self, net, num_regions=4, num_classes=100, feature_dim=100):
+    def __init__(self, net, num_classes=100, feature_dim=100):
         super(Siamese1, self).__init__()
-        self.num_regions = num_regions
         self.features = net.features
-        feature_pool_factor = 1
         # TODO output size of last filter of net's features should be 6*6
-        in_features_factor = 6 ** 2 / (feature_pool_factor ** 2)
+        in_features_factor = 6 ** 2
         for module in self.features:
             if hasattr(module, 'out_channels'):
                 in_features = module.out_channels * in_features_factor
@@ -109,37 +107,17 @@ class Siamese1(nn.Module):
                     out_features = module.out_features
         else:
             out_features = feature_dim
-        # TODO region of interest pooling (need external algorithm for region proposals or RPN but external way of generating bounding boxes -> see paper by Gordo et al)
-        self.feature_pooling = nn.AvgPool2d(feature_pool_factor)
-        self.feature_reduc = nn.Sequential(
-            nn.Linear(in_features, out_features),
-            # NormalizeL2()
+        self.feature_reduc1 = nn.Sequential(
+            NormalizeL2(),
+            nn.Linear(in_features, out_features)
         )
-        self.region_pooling = nn.AvgPool1d(num_regions)
-        self.final_reduc = NormalizeL2()
-        # self.classifier = net.classifier
-        # if feature_dim <= 0:
-        #     self.feature_reduc = NormalizeL2()
-        # else:
-        #     self.feature_reduc = nn.Sequential(
-        #         NormalizeL2(),
-        #         nn.Linear(net.classifier[len(net.classifier._modules) - 1].out_features, feature_dim),
-        #         NormalizeL2()
-        #     )
+        self.feature_reduc2 = NormalizeL2()
 
     def forward_single(self, x):
         x = self.features(x)
-        x = self.feature_pooling(x)
         x = x.view(x.size(0), -1)
-        x = self.feature_reduc(x)
-        x = x.view(x.size(0) / self.num_regions, self.num_regions, -1)
-        x = x.transpose(1, 2)
-        # region pooling (L2 avg pooling)
-        x = x.pow(2)
-        x = self.region_pooling(x)
-        x = x.pow(0.5)
-        x = x.view(x.size(0), -1)
-        x = self.final_reduc(x)
+        x = self.feature_reduc1(x)
+        x = self.feature_reduc2(x)
         return x
 
     def forward(self, x1, x2=None):
