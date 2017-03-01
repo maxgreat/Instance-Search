@@ -109,7 +109,7 @@ class Siamese1(nn.Module):
                     out_features = module.out_features
         else:
             out_features = feature_dim
-        # TODO region of interest pooling
+        # TODO region of interest pooling (need external algorithm for region proposals or RPN but external way of generating bounding boxes -> see paper by Gordo et al)
         self.feature_pooling = nn.AvgPool2d(feature_pool_factor)
         self.feature_reduc = nn.Sequential(
             nn.Linear(in_features, out_features),
