@@ -25,9 +25,9 @@ from dataset import ReadImages
 # TODO it seems like naive generator does not work at all
 # should train with 'difficult' examples first
 
-used_dataset = 'fourviere'
+used_dataset = 'CLICIDE'
 finetuning = True
-cos_margin = math.sqrt(0) / 2  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
+cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
 
 
 # get batches of size batch_size from the set x
@@ -89,6 +89,25 @@ def pad_square(img):
     return img.crop((-h_pad, -v_pad, img.size[0] + h_pad, img.size[1] + v_pad))
 
 
+# randomly rotate, shift and scale vertically and horizontally a PIL image with given angle in radians and shifting/scaling ratios
+# inspired by http://stackoverflow.com/questions/7501009/affine-transform-in-pil-python
+def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
+    def trans(im):
+        angle = random.uniform(-rotation, rotation)
+        x, y = im.size[0] / 2, im.size[1] / 2
+        nx = x + random.uniform(-h_range, h_range) * im.size[0]
+        ny = y + random.uniform(-v_range, v_range) * im.size[1]
+        sx = 1 + random.uniform(-hs_range, hs_range)
+        sy = 1 + random.uniform(-vs_range, vs_range)
+        cos, sin = math.cos(angle), math.sin(angle)
+        a, b = cos / sx, sin / sx
+        c = x - nx * a - ny * b
+        d, e = -sin / sy, cos / sy
+        f = y - nx * d - ny * e
+        return im.transform(im.size, Image.AFFINE, (a, b, c, d, e, f), resample=Image.NEAREST)
+    return trans
+
+
 # test a classifier model. it should be in eval mode
 def test_classif_net(net, testSet, labels, batchSize):
     """
@@ -109,10 +128,11 @@ def test_classif_net(net, testSet, labels, batchSize):
     return fold_batches(eval_batch_test, (0, 0), testSet, batchSize)
 
 
-def test_print_classif(net, testSet, labels, bestScore=0, saveDir='data/', epoch=0, batchSize=1000):
+def test_print_classif(net, testset_tuple, labels, bestScore=0, saveDir='data/', epoch=0, batchSize=1000):
+    testTrainSet, testSet = testset_tuple
     net.eval()
-    c, t = test_classif_net(net, testSet, labels, batchSize=batchSize)
-    print("Correct : ", c, "/", t, '->', float(c) / t)
+    c, t = test_classif_net(net, testSet, labels, batchSize)
+    print("TEST - Correct : ", c, "/", t, '->', float(c) / t)
     if (c >= bestScore):
         best = net
         bestScore = c
@@ -120,11 +140,13 @@ def test_print_classif(net, testSet, labels, bestScore=0, saveDir='data/', epoch
     # else:
     #    net = best
     torch.save(net, path.join(saveDir, "model-" + str(epoch) + ".ckpt"))
+    c, t = test_classif_net(net, testTrainSet, labels, batchSize)
+    print("TRAIN - Correct: ", c, "/", t, '->', float(c) / t)
     net.train()
     return bestScore
 
 
-def train_classif(net, trainSet, testSet, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
+def train_classif(net, trainSet, testset_tuple, labels, trainTransform, criterion, optimizer, saveDir="data/", batchSize=32, epochStart=0, nbEpoch=50, bestScore=0):
     """
         Train a network
         inputs :
@@ -162,14 +184,13 @@ def train_classif(net, trainSet, testSet, labels, trainTransform, criterion, opt
             running_loss = 0.0
 
         if batchCount % 50 == 49:  # test every x mini-batches
-            bestScore = test_print_classif(net, testSet, labels, bestScore, saveDir, epoch + 1)
+            bestScore = test_print_classif(net, testset_tuple, labels, bestScore, saveDir, epoch + 1)
         return batchCount + 1, bestScore, running_loss
 
     for epoch in range(epochStart, nbEpoch):  # loop over the dataset multiple times
         init = 0, bestScore, 0.0
         random.shuffle(trainSet)
         fold_batches(train_batch, init, trainSet, batchSize)
-    print('Finished classification training')
 
 
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
@@ -304,45 +325,53 @@ def train_siamese(net, trainSet, testset_tuple, labels, trainTransform, testTran
         init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
         fold_batches(train_batch, init, trainSet, batchSize)
 
-    print('Finished descriptor training')
-
 
 if __name__ == '__main__':
 
     def match(x):
         return x.split('/')[-1].split('-')[0]
     # training and test sets (scaled to 300 on the small side)
-    trainSet = ReadImages.readImageswithPattern(
-        'data/pre_proc/' + used_dataset + '_227sqpad', match)
+    trainSetFull = ReadImages.readImageswithPattern(
+        'data/pre_proc/' + used_dataset + '_227sq', match)
     testSetFull = ReadImages.readImageswithPattern(
-        'data/pre_proc/' + used_dataset + '_227sqpad/test', match)
+        'data/pre_proc/' + used_dataset + '_227sq/test', match)
 
     m, s = readMeanStd('data/' + ('cli.txt' if used_dataset == 'CLICIDE' else 'fou.txt'))
 
     # define the labels list
-    listLabel = [t[1] for t in trainSet if 'wall' not in t[1]]
+    listLabel = [t[1] for t in trainSetFull if 'wall' not in t[1]]
     labels = list(set(listLabel))  # we have to give a number for each label
 
-    # scaling was already applied to train/test sets (small side 300)
+    # transforms are dependent on pre-processing in dataset (usually no need to scale)
     testClassifTrans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+    trainClassifTrans = transforms.Compose((random_affine(rotation=30, h_range=0.1, v_range=0.1, hs_range=0.1, vs_range=0.1), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)))
     testTransform = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
     trainTransform = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
 
     print('Loading and transforming train/test sets.')
     # open the images (and transform already if possible)
     # do that only if it fits in memory !
-    for i, (im, lab) in enumerate(trainSet):
-        trainSet[i] = (trainTransform(Image.open(im)), lab)
+    trainSetClassif = []
+    for im, lab in trainSetFull:
+        trainSetClassif.append((Image.open(im), lab))
 
-    testSet = []
-    for im, lab in testSetFull:
-        if lab in labels:
-            testSet.append((testTransform(Image.open(im)), lab))
+    testTrainSetClassif = []
+    for im, lab in trainSetClassif:
+        testTrainSetClassif.append((testClassifTrans(im), lab))
 
     testSetClassif = []
     for im, lab in testSetFull:
         if lab in labels:
             testSetClassif.append((testClassifTrans(Image.open(im)), lab))
+
+    trainSet = []
+    for im, lab in trainSetFull:
+        trainSet.append((trainTransform(Image.open(im)), lab))
+
+    testSet = []
+    for im, lab in testSetFull:
+        if lab in labels:
+            testSet.append((testTransform(Image.open(im)), lab))
 
     # transform all training images for testRefSet
     # testRefSet = []
@@ -355,7 +384,7 @@ if __name__ == '__main__':
     print('training set size: ', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
 
     if finetuning:
-        class_net = TuneClassif(models.alexnet(pretrained=True), len(labels), untrained_layers=-1)
+        class_net = TuneClassif(models.alexnet(pretrained=True), len(labels), untrained_layers=4)
         lr = 1e-3
     else:
         class_net = models.alexnet()
@@ -363,9 +392,12 @@ if __name__ == '__main__':
     class_net.train().cuda()
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=lr, momentum=0.9, weight_decay=5e-4)
     criterion = nn.loss.CrossEntropyLoss()
-    test_print_classif(class_net, testSetClassif, labels)
+    print('Starting classification training')
+    testset_tuple = (testTrainSetClassif, testSetClassif)
+    test_print_classif(class_net, testset_tuple, labels)
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainSet, testSetClassif, labels, trainTransform, criterion, optimizer, nbEpoch=0)
+    train_classif(class_net, trainSetClassif, testset_tuple, labels, trainClassifTrans, criterion, optimizer, nbEpoch=50)
+    print('Finished classification training')
 
     net = Siamese1(class_net, feature_dim=4096)
     net.train().cuda()
@@ -373,5 +405,8 @@ if __name__ == '__main__':
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=1e-3, momentum=0.9)
     criterion = nn.loss.CosineEmbeddingLoss(margin=cos_margin)
     batchSize = 256
-    test_print_siamese(net, (testSet, trainSet), testTransform, batchSize)
-    train_siamese(net, couples, (testSet, trainSet), labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=5)
+    print('Starting descriptor training')
+    testset_tuple = (testSet, trainSet)
+    test_print_siamese(net, testset_tuple, testTransform, batchSize)
+    train_siamese(net, couples, testset_tuple, labels, trainTransform, testTransform, criterion, optimizer, batchSize=batchSize, nbEpoch=0)
+    print('Finished descriptor training')

@@ -108,6 +108,7 @@ class Siamese1(nn.Module):
         else:
             out_features = feature_dim
         self.feature_reduc1 = nn.Sequential(
+            nn.Dropout(0.5),
             NormalizeL2(),
             nn.Linear(in_features, out_features)
         )
