@@ -112,9 +112,11 @@ class Siamese1(nn.Module):
     def __init__(self, net, num_classes=100, feature_dim=100, feature_size2d=(6, 6)):
         super(Siamese1, self).__init__()
         self.features = net.features
-        self.spatial_feature_reduc = nn.AvgPool2d(2)
-        # TODO output size of last filter of net's features should be 6*6
-        factor = feature_size2d[0] * feature_size2d[1]
+        spatial_factor = 1
+        self.spatial_feature_reduc = nn.Sequential(
+            nn.AvgPool2d(spatial_factor)
+        )
+        factor = feature_size2d[0] / spatial_factor * feature_size2d[1] / spatial_factor
         for module in self.features:
             if isinstance(module, models.resnet.Bottleneck):
                 in_features = module.conv3.out_channels * factor
@@ -137,6 +139,7 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
+        x = self.spatial_feature_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc1(x)
         x = self.feature_reduc2(x)

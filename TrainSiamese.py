@@ -12,7 +12,8 @@ import itertools
 import functools
 import random
 import time
-from os import path
+from os import path, rename
+import tempfile
 from uuid import uuid1
 
 from PIL import Image
@@ -23,8 +24,6 @@ from dataset import ReadImages
 # TODO create generator to yield couples of images
 # / triplets (need a way to identify positive couples for each images,
 # then iterate over all others to create triples)
-# TODO it seems like naive generator does not work at all
-# should train with 'difficult' examples first
 
 
 def trans_str(trans):
@@ -68,53 +67,15 @@ def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
 class TestParams(object):
 
     def __init__(self):
-        self.finetuning = True
+        # UUID for these parameters (at random)
+        self.uuid = uuid1()
+
+        # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_227sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.mean_std_file = 'data/cli.txt' if self.dataset_name == 'CLICIDE' else 'data/fou.txt'
-        m, s = readMeanStd(self.mean_std_file)
-        self.classif_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
-        self.classif_train_aug_rot = r = 45
-        self.classif_train_aug_hrange = hr = 0.2
-        self.classif_train_aug_vrange = vr = 0.2
-        self.classif_train_aug_hsrange = hsr = 0.2
-        self.classif_train_aug_vsrange = vsr = 0.2
-        self.classif_train_trans = transforms.Compose((random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)))
-        self.classif_test_pre_proc = True
-        self.classif_train_pre_proc = False
-        self.classif_train_batch_size = 32
-        self.classif_test_batch_size = 128
-        self.classif_lr = 1e-3
-        self.classif_momentum = 0.9
-        self.classif_weight_decay = 5e-4
-        self.classif_optim = 'SGD'
-        self.classif_annealing = {30: 0.1}
-        self.classif_train_epochs = 50
-        self.classif_loss_int = 10
-        self.classif_test_int = 100
-        self.classif_input_size = (3, 227, 227)
-        self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
-        self.siam_train_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
-        self.siam_test_pre_proc = True
-        self.siam_train_pre_proc = True
-        self.siam_couples_percentage = 0.9
-        self.siam_train_batch_size = 64
-        self.siam_test_batch_size = 64
-        self.siam_lr = 1e-3
-        self.siam_momentum = 0.9
-        self.siam_weight_decay = 0.0
-        self.siam_optim = 'SGD'
-        self.siam_annealing = {}
-        self.siam_feature_dim = 4096
-        self.siam_train_epochs = 5
-        self.siam_loss_int = 10
-        self.siam_test_int = 50
-        self.siam_input_size = (3, 227, 227)
-        self.siam_feature_out_size2d = (8, 8)
-        self.cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
+        self.finetuning = True
         self.save_dir = 'data'
-        self.uuid = uuid1()
-
         # in ResNet, before first layer, there are 2 modules with parameters.
         # then number of blocks per layers:
         # ResNet152 - layer 1: 3, layer 2: 8, layer 3: 36, layer 4: 3
@@ -122,10 +83,59 @@ class TestParams(object):
         # finally, a single FC layer is used as classifier
         self.untrained_blocks = 2 + 3 + 8 + 36
 
-    def save(self, filename, prefix):
-        f = open(filename, 'w')
+        # read mean and standard of dataset here to define transforms already
+        m, s = readMeanStd(self.mean_std_file)
+
+        # Classification net general and test params
+        self.classif_input_size = (3, 227, 227)
+        self.classif_test_batch_size = 128
+        self.classif_test_pre_proc = True
+        self.classif_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+
+        # Classification net training params
+        self.classif_train_epochs = 0
+        self.classif_train_batch_size = 32
+        self.classif_train_pre_proc = False
+        self.classif_train_aug_rot = r = 45
+        self.classif_train_aug_hrange = hr = 0.2
+        self.classif_train_aug_vrange = vr = 0.2
+        self.classif_train_aug_hsrange = hsr = 0.2
+        self.classif_train_aug_vsrange = vsr = 0.2
+        self.classif_train_trans = transforms.Compose((random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)))
+        self.classif_lr = 1e-4
+        self.classif_momentum = 0.9
+        self.classif_weight_decay = 5e-4
+        self.classif_optim = 'SGD'
+        self.classif_annealing = {30: 0.1}
+        self.classif_loss_int = 10
+        self.classif_test_int = 100
+
+        # Siamese net general and testing params
+        self.siam_input_size = (3, 227, 227)
+        self.siam_feature_out_size2d = (8, 8)
+        self.siam_feature_dim = 4096
+        self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
+        self.siam_test_batch_size = 64
+        self.siam_test_pre_proc = True
+        self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+
+        # Siamese net training params
+        self.siam_train_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+        self.siam_train_pre_proc = True
+        self.siam_couples_percentage = 0.9
+        self.siam_train_batch_size = 256
+        self.siam_lr = 1e-3
+        self.siam_momentum = 0.9
+        self.siam_weight_decay = 0.0
+        self.siam_optim = 'SGD'
+        self.siam_annealing = {}
+        self.siam_train_epochs = 5
+        self.siam_loss_int = 10
+        self.siam_test_int = 50
+
+    def save(self, f, prefix):
         f.write('{0}\n'.format(prefix))
-        for name, value in vars(self).items():
+        for name, value in sorted(vars(self).items()):
             if name == 'uuid':
                 continue
             if name in ('classif_test_trans', 'classif_train_trans', 'siam_test_trans', 'siam_train_trans'):
@@ -135,7 +145,10 @@ class TestParams(object):
         f.close()
 
     def save_uuid(self, prefix):
-        self.save(path.join(self.save_dir, self.uuid.hex + '.txt'), prefix)
+        f = tempfile.NamedTemporaryFile(dir=self.save_dir, delete=False)
+        self.save(f, prefix)
+        # the following will not work on Windows (would need to add a remove first)
+        rename(f.name, path.join(self.save_dir, self.uuid.hex + '.txt'))
 
 
 test_params = TestParams()
@@ -213,11 +226,12 @@ def test_print_classif(net, testset_tuple, labels, bestScore=0, epoch=0):
     testTrainSet, testSet = testset_tuple
     net.eval()
     c, t = test_classif_net(net, testSet, labels, test_params.classif_test_batch_size)
-    print("TEST - Correct : ", c, "/", t, '->', float(c) / t)
-    if (c >= bestScore):
+    if (c > bestScore):
         bestScore = c
-        test_params.save_uuid('CLASSIF, EPOCH:' + str(epoch))
+        prefix = 'CLASSIF, EPOCH:{0}, SCORE:{1}'.format(epoch, c)
+        test_params.save_uuid(prefix)
         torch.save(net, path.join(test_params.save_dir, test_params.uuid.hex + "_best_classif.ckpt"))
+    print("TEST - Correct : ", c, "/", t, '->', float(c) / t)
 
     c, t = test_classif_net(net, testTrainSet, labels, test_params.classif_test_batch_size)
     torch.save(net, path.join(test_params.save_dir, "model_classif_" + str(epoch) + ".ckpt"))
@@ -237,7 +251,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             * optimizer
     """
     def train_batch(last, i, batch):
-        batchCount, bestScore, running_loss = last
+        batchCount, score, running_loss = last
         batchSize = len(batch)
         # get the inputs
         C, H, W = test_params.classif_input_size
@@ -270,8 +284,8 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
 
         test_int = test_params.classif_test_int
         if batchCount % test_int == test_int - 1:
-            bestScore = test_print_classif(net, testset_tuple, labels, bestScore, epoch + 1)
-        return batchCount + 1, bestScore, running_loss
+            score = test_print_classif(net, testset_tuple, labels, score, epoch + 1)
+        return batchCount + 1, score, running_loss
 
     for epoch in range(test_params.classif_train_epochs):
         # annealing
@@ -283,7 +297,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
         init = 0, bestScore, 0.0
         random.shuffle(trainSet)
-        fold_batches(train_batch, init, trainSet, test_params.classif_train_batch_size)
+        _, bestScore, _ = fold_batches(train_batch, init, trainSet, test_params.classif_train_batch_size)
 
 
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
@@ -358,11 +372,12 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     # f.close()
     num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
     num_neg = len(testSet) * len(testRefSet) - num_pos
-    print("TEST SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
     if (correct > bestScore):
         bestScore = correct
-        test_params.save_uuid('SIAM, EPOCH:' + str(epoch))
+        prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
+        test_params.save_uuid(prefix)
         torch.save(net, path.join(test_params.save_dir, test_params.uuid.hex + "_best_siam.ckpt"))
+    print("TEST - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
 
     torch.save(net, path.join(test_params.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
@@ -371,7 +386,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     correct, tot, sum_pos, sum_neg, _ = test_descriptor_net(net, trainTestSet, testRefSet)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
-    print("TRAIN SET - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
+    print("TRAIN - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
     net.train()
     return bestScore
 
@@ -387,7 +402,7 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             * optimizer
     """
     def train_batch(last, i, batch):
-        batchCount, bestScore, runningLoss = last
+        batchCount, score, runningLoss = last
 
         # using sub-batches (only pairs with biggest loss)
         # losses = []
@@ -424,14 +439,14 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         # test model every x mini-batches
         test_int = test_params.siam_test_int
         if batchCount % test_int == test_int - 1:
-            bestScore = test_print_siamese(net, testset_tuple, bestScore, epoch + 1)
-        return batchCount + 1, bestScore, runningLoss
+            score = test_print_siamese(net, testset_tuple, score, epoch + 1)
+        return batchCount + 1, score, runningLoss
 
     # loop over the dataset multiple times
     for epoch in range(test_params.siam_train_epochs):
         random.shuffle(trainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
-        fold_batches(train_batch, init, trainSet, test_params.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_batch, init, trainSet, test_params.siam_train_batch_size)
 
 
 if __name__ == '__main__':
@@ -503,14 +518,16 @@ if __name__ == '__main__':
     else:
         class_net = models.resnet152()
 
+    class_net = torch.load(path.join(test_params.save_dir, 'best_classif_1.ckpt'))
+
     class_net.train().cuda()
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=test_params.classif_lr, momentum=test_params.classif_momentum, weight_decay=test_params.classif_weight_decay)
     criterion = nn.loss.CrossEntropyLoss()
     print('Starting classification training')
     testset_tuple = (testTrainSetClassif, testSetClassif)
-    test_print_classif(class_net, testset_tuple, labels)
+    score = test_print_classif(class_net, testset_tuple, labels)
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer)
+    train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
     print('Finished classification training')
 
     # for ResNet152, spatial feature dimensions are 8x8 (for 227x227 input)
@@ -519,9 +536,9 @@ if __name__ == '__main__':
     net.train().cuda()
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=test_params.siam_lr, momentum=test_params.siam_momentum, weight_decay=test_params.siam_weight_decay)
-    criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.cos_margin)
+    criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.siam_cos_margin)
     print('Starting descriptor training')
     testset_tuple = (testSet, trainSet)
-    test_print_siamese(net, testset_tuple, test_params.siam_test_batch_size)
-    train_siamese(net, couples, testset_tuple, labels, criterion, optimizer)
+    score = test_print_siamese(net, testset_tuple, test_params.siam_test_batch_size)
+    train_siamese(net, couples, testset_tuple, labels, criterion, optimizer, bestScore=score)
     print('Finished descriptor training')
