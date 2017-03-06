@@ -18,7 +18,7 @@ from uuid import uuid1
 
 from PIL import Image
 
-from model.siamese import Siamese1, TuneClassif, Normalize2DL2, MetricLoss
+from model.siamese import *
 from dataset import ReadImages
 
 # TODO create generator to yield couples of images
@@ -76,6 +76,8 @@ class TestParams(object):
         self.mean_std_file = 'data/cli.txt' if self.dataset_name == 'CLICIDE' else 'data/fou.txt'
         self.finetuning = True
         self.save_dir = 'data'
+        self.cuda_device = 1
+
         # in ResNet, before first layer, there are 2 modules with parameters.
         # then number of blocks per layers:
         # ResNet152 - layer 1: 3, layer 2: 8, layer 3: 36, layer 4: 3
@@ -115,6 +117,7 @@ class TestParams(object):
         self.siam_feature_out_size2d = (8, 8)
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
+        self.siam_loss_avg = False
         self.siam_test_batch_size = 64
         self.siam_test_pre_proc = True
         self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
@@ -123,7 +126,7 @@ class TestParams(object):
         self.siam_train_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
         self.siam_train_pre_proc = True
         self.siam_couples_percentage = 0.9
-        self.siam_train_batch_size = 256
+        self.siam_train_batch_size = 16
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
@@ -152,6 +155,18 @@ class TestParams(object):
 
 
 test_params = TestParams()
+
+
+def tensor_t(t, *sizes):
+    r = t(*sizes)
+    if test_params.cuda_device >= 0:
+        return r.cuda()
+    else:
+        return r.cpu()
+
+
+def tensor(*sizes):
+    return tensor_t(torch.Tensor, *sizes)
 
 
 # get batches of size batch_size from the set x
@@ -207,7 +222,7 @@ def test_classif_net(net, testSet, labels, batchSize):
     def eval_batch_test(last, i, batch):
         correct, total = last
         C, H, W = test_params.classif_input_size
-        inputs = torch.Tensor(len(batch), C, H, W).cuda()
+        inputs = tensor(len(batch), C, H, W)
         for j, (testIm, _) in enumerate(batch):
             if test_params.classif_test_pre_proc:
                 inputs[j] = testIm
@@ -255,7 +270,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         batchSize = len(batch)
         # get the inputs
         C, H, W = test_params.classif_input_size
-        inputs = torch.Tensor(batchSize, C, H, W).cuda()
+        inputs = tensor(batchSize, C, H, W)
         for j in range(batchSize):
             if test_params.classif_train_pre_proc:
                 inputs[j] = batch[j][0]
@@ -264,7 +279,10 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         inputs = Variable(inputs)
 
         # get the labels
-        lab = Variable(torch.LongTensor([labels.index(batch[j][1]) for j in range(batchSize)]).cuda())
+        lab = tensor_t(torch.LongTensor, len(batchSize))
+        for j in range(batchSize):
+            lab[j] = labels.index(batch[j][1])
+        lab = Variable(lab)
 
         # zero the parameter gradients
         optimizer.zero_grad()
@@ -309,7 +327,7 @@ def test_descriptor_net(net, testSet, testRefSet, is_normalized=True):
     def eval_batch_ref(last, i, batch):
         maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels = last
         C, H, W = test_params.siam_input_size
-        inputs2 = torch.Tensor(len(batch), C, H, W).cuda()
+        inputs2 = tensor(len(batch), C, H, W)
         for k, (refIm, _) in enumerate(batch):
             if test_params.siam_test_pre_proc:
                 inputs2[k] = refIm
@@ -329,9 +347,9 @@ def test_descriptor_net(net, testSet, testRefSet, is_normalized=True):
         return maxSim, maxLabel, sum_pos, sum_neg, outputs1, testLabels
 
     def eval_batch_test(last, i, batch):
-        correct, total, sum_pos, sum_neg, lab_dict = last
+        correct, total, sum_pos, sum_neg, sum_max, lab_dict = last
         C, H, W = test_params.siam_input_size
-        inputs1 = torch.Tensor(len(batch), C, H, W).cuda()
+        inputs1 = tensor(len(batch), C, H, W)
         for j, (testIm, _) in enumerate(batch):
             if test_params.siam_test_pre_proc:
                 inputs1[j] = testIm
@@ -341,23 +359,24 @@ def test_descriptor_net(net, testSet, testRefSet, is_normalized=True):
         if not is_normalized:
             outputs1 = normalize_rows(outputs1)
         # max similarity, max label, outputs
-        maxSim = torch.Tensor(len(batch), 1).fill_(-2).cuda()
+        maxSim = tensor(len(batch), 1).fill_(-2)
         init = maxSim, [None for _ in batch], sum_pos, sum_neg, outputs1, [lab for im, lab in batch]
         maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, test_params.siam_test_batch_size)
+        sum_max += maxSim.sum()
         for j, (_, lab) in enumerate(batch):
             lab_dict[lab].append((maxLabel[j], 1))
         total += len(batch)
         correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
-        return correct, total, sum_pos, sum_neg, lab_dict
+        return correct, total, sum_pos, sum_neg, sum_max, lab_dict
 
     lab_dict = dict([(lab, []) for _, lab in testSet])
-    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0, lab_dict), testSet, test_params.siam_test_batch_size)
+    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0, 0.0, lab_dict), testSet, test_params.siam_test_batch_size)
 
 
 def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     testSet, testRefSet = testset_tuple
     net.eval()
-    correct, tot, sum_pos, sum_neg, lab_dict = test_descriptor_net(net, testSet, testRefSet)
+    correct, tot, sum_pos, sum_neg, sum_max, lab_dict = test_descriptor_net(net, testSet, testRefSet)
     # can save labels dictionary (predicted labels for all test labels)
     # for lab in lab_dict:
     #     def red_f(x, y):
@@ -377,16 +396,16 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
         prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
         test_params.save_uuid(prefix)
         torch.save(net, path.join(test_params.save_dir, test_params.uuid.hex + "_best_siam.ckpt"))
-    print("TEST - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
+    print("TEST - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg, 'avg max:', sum_max / len(testSet))
 
     torch.save(net, path.join(test_params.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
     # training set accuracy
     trainTestSet = testRefSet[:200]
-    correct, tot, sum_pos, sum_neg, _ = test_descriptor_net(net, trainTestSet, testRefSet)
+    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, trainTestSet, testRefSet)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
-    print("TRAIN - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg)
+    print("TRAIN - Correct : ", correct, "/", tot, '->', float(correct) / tot, 'avg pos:', sum_pos / num_pos, 'avg neg:', sum_neg / num_neg, 'avg max:', sum_max / len(trainTestSet))
     net.train()
     return bestScore
 
@@ -411,9 +430,9 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         # get the inputs
         n = len(batch)
         C, H, W = test_params.siam_input_size
-        train_inputs1 = torch.Tensor(n, C, H, W).cuda()
-        train_inputs2 = torch.Tensor(n, C, H, W).cuda()
-        train_labels = torch.Tensor(n).cuda()
+        train_inputs1 = tensor(n, C, H, W)
+        train_inputs2 = tensor(n, C, H, W)
+        train_labels = tensor(n)
         for j, ((im1, im2), lab) in enumerate(batch):
             if test_params.siam_train_pre_proc:
                 train_inputs1[j] = im1
@@ -445,11 +464,31 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
     # loop over the dataset multiple times
     for epoch in range(test_params.siam_train_epochs):
         random.shuffle(trainSet)
-        init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
-        _, bestScore, _ = fold_batches(train_batch, init, trainSet, test_params.siam_train_batch_size)
+        # init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
+        # _, bestScore, _ = fold_batches(train_batch, init, trainSet, test_params.siam_train_batch_size)
+        for i in range(len(trainSet)):
+            for j in range(len(trainSet)):
+                for k in range(len(trainSet)):
+                    if trainSet[i][1] != trainSet[j][1] or trainSet[i][1] == trainSet[k][1]:
+                        continue
+
+                    C, H, W = test_params.siam_input_size
+                    train_inputs1 = tensor(1, C, H, W)
+                    train_inputs2 = tensor(1, C, H, W)
+                    train_inputs3 = tensor(1, C, H, W)
+                    train_inputs1[0] = trainSet[i][0]
+                    train_inputs2[0] = trainSet[j][0]
+                    train_inputs3[0] = trainSet[k][0]
+                    optimizer.zero_grad()
+                    out1, out2, out3 = net(Variable(train_inputs1), Variable(train_inputs2), Variable(train_inputs3))
+                    loss = criterion(out1, out2, out3)
+                    loss.backward()
+                    optimizer.step()
+
+                    print(loss.data[0])
 
 
-if __name__ == '__main__':
+def main():
 
     def match(x):
         return x.split('/')[-1].split('-')[0]
@@ -520,25 +559,39 @@ if __name__ == '__main__':
 
     class_net = torch.load(path.join(test_params.save_dir, 'best_classif_1.ckpt'))
 
-    class_net.train().cuda()
+    if test_params.cuda_device >= 0:
+        class_net.cuda()
+    else:
+        class_net.cpu()
+    class_net.train()
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=test_params.classif_lr, momentum=test_params.classif_momentum, weight_decay=test_params.classif_weight_decay)
     criterion = nn.loss.CrossEntropyLoss()
     print('Starting classification training')
     testset_tuple = (testTrainSetClassif, testSetClassif)
-    score = test_print_classif(class_net, testset_tuple, labels)
+    # score = test_print_classif(class_net, testset_tuple, labels)
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
+    # train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
     print('Finished classification training')
 
     # for ResNet152, spatial feature dimensions are 8x8 (for 227x227 input)
     # for AlexNet, it's 6x6 (for 227x227 input)
     net = Siamese1(class_net, feature_dim=test_params.siam_feature_dim, feature_size2d=test_params.siam_feature_out_size2d)
-    net.train().cuda()
+    if test_params.cuda_device >= 0:
+        net.cuda()
+    else:
+        net.cpu()
+    net.train()
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=test_params.siam_lr, momentum=test_params.siam_momentum, weight_decay=test_params.siam_weight_decay)
-    criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.siam_cos_margin)
+    # criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.siam_cos_margin, size_average=test_params.siam_loss_avg)
+    criterion = TripletLoss(margin=0.2)
     print('Starting descriptor training')
     testset_tuple = (testSet, trainSet)
     score = test_print_siamese(net, testset_tuple, test_params.siam_test_batch_size)
-    train_siamese(net, couples, testset_tuple, labels, criterion, optimizer, bestScore=score)
+    train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, bestScore=score)
     print('Finished descriptor training')
+
+
+if __name__ == '__main__':
+    with torch.cuda.device(test_params.cuda_device):
+        main()

@@ -112,7 +112,7 @@ class Siamese1(nn.Module):
     def __init__(self, net, num_classes=100, feature_dim=100, feature_size2d=(6, 6)):
         super(Siamese1, self).__init__()
         self.features = net.features
-        spatial_factor = 1
+        spatial_factor = 4
         self.spatial_feature_reduc = nn.Sequential(
             nn.AvgPool2d(spatial_factor)
         )
@@ -145,9 +145,9 @@ class Siamese1(nn.Module):
         x = self.feature_reduc2(x)
         return x
 
-    def forward(self, x1, x2=None):
+    def forward(self, x1, x2=None, x3=None):
         if self.training:
-            return self.forward_single(x1), self.forward_single(x2)
+            return self.forward_single(x1), self.forward_single(x2), self.forward_single(x3)
         else:
             return self.forward_single(x1)
 
@@ -165,7 +165,7 @@ class MetricL(Function):
         self.size_average = size_average
 
     # TODO: everything could be done inplace,
-    # more difficult though (for norm see torch Cosine Loss)
+    # more difficult though (for norm see torch.nn._functions.loss.Cosine...)
     def terms(self, input1, input2, y):
         diff = input1 - input2
         energy = diff.norm(1, 1)
@@ -178,16 +178,15 @@ class MetricL(Function):
         _, energy, exp_term = self.terms(input1, input2, y)
         loss_g = (1 + y) * energy * energy / 2
         loss_i = (1 - y) * 2 * exp_term
-        loss = (loss_g + loss_i).sum()
+        loss = (loss_g + loss_i).sum(0).view(1)
         if self.size_average:
-            loss = loss / y.size(0)
+            loss.div_(y.size(0))
         self.save_for_backward(input1, input2, y)
-        return torch.Tensor([loss])
+        return loss
 
     def backward(self, grad_output):
         input1, input2, y = self.saved_tensors
         diff, energy, exp_term = self.terms(input1, input2, y)
-        # represents the derivative w.r.t. input1 of energy
         diff[diff.lt(0)] = -1
         diff[diff.ge(0)] = 1
         y_g = (1 + y).view(-1, 1).expand_as(input1)
@@ -199,6 +198,9 @@ class MetricL(Function):
         if self.size_average:
             grad1.div_(y.size(0))
             grad2.div_(y.size(0))
+        if grad_output[0] != 1:
+            grad1.mul_(grad_output)
+            grad2.mul_(grad_output)
         return grad1, grad2, None
 
 
@@ -210,3 +212,64 @@ class MetricLoss(nn.Module):
 
     def forward(self, input1, input2, target):
         return MetricL(self.size_average)(input1, input2, target)
+
+
+class TripletL(Function):
+
+    def __init__(self, margin, size_average=True):
+        super(TripletL, self).__init__()
+        self.size_average = size_average
+        self.margin = margin
+
+    def forward(self, anchor, pos, neg):
+        sqdiff = anchor.add(-1, pos).pow_(2)
+        sqdiff = anchor.add(-1, neg).pow_(2)
+        loss = sqdiff.sum(1)
+        loss.add_(-1, sqdiff.sum(1))
+        loss.add_(self.margin)
+        self.clamp = torch.lt(loss, 0)
+        loss[self.clamp] = 0
+        loss = loss.sum(0).view(1)
+        if self.size_average:
+            loss.div_(anchor.size(0))
+        self.save_for_backward(anchor, pos, neg)
+        return loss
+
+    def backward(self, grad_output):
+        # grad_pos = -2(x_anchor - x_pos)
+        # grad_neg = 2(x_anchor - x_neg)
+        # grad_anchor = 2(x_anchor - x_pos) - 2(x_anchor - x_neg)
+        # = -(grad_pos + grad_neg)
+        anchor, pos, neg = self.saved_tensors
+        c = self.clamp.expand_as(anchor)
+        anchor[c] = 0
+        pos[c] = 0
+        neg[c] = 0
+        anchor_sum = anchor.sum(0)
+        grad_pos = anchor_sum.add(-1, pos.sum(0)).mul_(-2)
+        grad_neg = anchor_sum.add_(-1, neg.sum(0)).mul_(2)
+        grad_anchor = grad_pos.add(grad_neg).mul_(-1)
+
+        if self.size_average:
+            grad_anchor.div_(anchor.size(0))
+            grad_pos.div_(anchor.size(0))
+            grad_neg.div_(anchor.size(0))
+        if grad_output[0] != 1:
+            grad_anchor = grad_anchor.mul_(grad_output)
+            grad_pos = grad_pos.mul_(grad_output)
+            grad_neg = grad_neg.mul_(grad_output)
+        grad_anchor = grad_anchor.expand_as(anchor)
+        grad_pos = grad_pos.expand_as(anchor)
+        grad_neg = grad_neg.expand_as(anchor)
+        return grad_anchor, grad_pos, grad_neg
+
+
+class TripletLoss(nn.Module):
+
+    def __init__(self, margin, size_average=True):
+        super(TripletLoss, self).__init__()
+        self.size_average = size_average
+        self.margin = margin
+
+    def forward(self, anchor, pos, neg):
+        return TripletL(self.margin, self.size_average)(anchor, pos, neg)
