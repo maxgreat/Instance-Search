@@ -123,6 +123,12 @@ class TestParams(object):
         self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
 
         # Siamese net training params
+        # for train mode: 'couples': using cosine loss (and all couples)
+        # 'triplets_rand': using triplet loss and triplets chosen at random
+        # 'triplets_hard': using triplet loss and semi-hard triplets
+        # (see FaceNet paper by Schroff et al)
+        self.siam_train_mode = 'triplets_hard'
+        self.siam_triplet_margin = 0.2
         self.siam_train_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
         self.siam_train_pre_proc = True
         self.siam_couples_percentage = 0.9
@@ -197,17 +203,33 @@ def cos_sim_normed(x1, x2):
 def get_couples(dataset, neg_percentage):
     num_pos = 0
     couples = []
+    cwr = itertools.combinations_with_replacement
     # get all positive couples
-    for (x1, l1), (x2, l2) in itertools.combinations_with_replacement(dataset, 2):
+    for (i1, (x1, l1)), (i2, (x2, l2)) in cwr(enumerate(dataset), 2):
         if l1 == l2:
+            if test_params.siam_train_mode == 'couples':
+                # just need 1/-1
+                lab = 1
+            elif test_params.siam_train_mode == 'triplets':
+                # need the actual label (and not whether same or not)
+                lab = l1
+            else:
+                # need the label and indices (for embeddings)
+                lab = l1, (i1, i2)
+            couples.append(((x1, x2), lab))
             num_pos += 1
-            couples.append(((x1, x2), 1))
+    if neg_percentage <= 0:
+        return couples
     num_neg = 0
     # get negative couples
     for (x1, l1), (x2, l2) in itertools.combinations(dataset, 2):
         if l1 != l2:
+            if test_params.siam_train_mode == 'couples':
+                lab = -1
+            else:
+                lab = None  # not needed as triplets only use pos pairs
+            couples.append(((x1, x2), lab))
             num_neg += 1
-            couples.append(((x1, x2), -1))
             if float(num_neg) / (num_neg + num_pos) >= neg_percentage:
                 break
     return couples
@@ -420,8 +442,34 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             * loss function (criterion)
             * optimizer
     """
-    def train_batch(last, i, batch):
-        batchCount, score, runningLoss = last
+    C, H, W = test_params.siam_input_size
+    disp_int = test_params.siam_loss_int
+    test_int = test_params.siam_test_int
+    trans = test_params.siam_train_trans
+
+    def embeddings_batch(last, i, batch):
+        embeddings = last
+        n = len(batch)
+        inputs = tensor(n, C, H, W)
+        for j in range(n):
+            inputs[j] = batch[j][0]
+        outputs = net(Variable(inputs, volatile=True))
+        for j in range(n):
+            embeddings[i + j] = outputs.data[j]
+        return embeddings
+
+    def print_stats(epoch, batchCount, loss, running_loss, score):
+        running_loss += loss.data[0]
+        if batchCount % disp_int == disp_int - 1:
+            print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, running_loss / disp_int))
+            running_loss = 0.0
+        # test model every x mini-batches
+        if batchCount % test_int == test_int - 1:
+            score = test_print_siamese(net, testset_tuple, score, epoch + 1)
+        return running_loss, score
+
+    def train_couples(last, i, batch):
+        batchCount, score, running_loss = last
 
         # using sub-batches (only pairs with biggest loss)
         # losses = []
@@ -429,7 +477,6 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
 
         # get the inputs
         n = len(batch)
-        C, H, W = test_params.siam_input_size
         train_inputs1 = tensor(n, C, H, W)
         train_inputs2 = tensor(n, C, H, W)
         train_labels = tensor(n)
@@ -438,8 +485,8 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
                 train_inputs1[j] = im1
                 train_inputs2[j] = im2
             else:
-                train_inputs1[j] = test_params.siam_train_trans(im1)
-                train_inputs2[j] = test_params.siam_train_trans(im2)
+                train_inputs1[j] = trans(im1)
+                train_inputs2[j] = trans(im2)
             train_labels[j] = lab
 
         # zero the parameter gradients, then forward + back prop
@@ -448,44 +495,114 @@ def train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         loss = criterion(outputs1, outputs2, Variable(train_labels))
         loss.backward()
         optimizer.step()
+        running_loss, score = print_stats(epoch, batchCount, loss, running_loss, score)
+        return batchCount + 1, score, running_loss
 
-        # print statistics
-        runningLoss += loss.data[0]
-        disp_int = test_params.siam_loss_int
-        if batchCount % disp_int == disp_int - 1:
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, runningLoss / disp_int))
-            runningLoss = 0.0
-        # test model every x mini-batches
-        test_int = test_params.siam_test_int
-        if batchCount % test_int == test_int - 1:
-            score = test_print_siamese(net, testset_tuple, score, epoch + 1)
-        return batchCount + 1, score, runningLoss
+    def train_triplets(last, i, batch):
+        batchCount, score, running_loss = last
+        # we get a batch of positive couples
+        # find random negatives for each couple
+        n = len(batch)
+        train_inputs1 = tensor(n, C, H, W)
+        train_inputs2 = tensor(n, C, H, W)
+        train_inputs3 = tensor(n, C, H, W)
+        for j, ((x1, x2), lab) in enumerate(batch):
+            k = random.randrange(len(trainSet))
+            while (trainSet[k][1] == lab):
+                k = random.randrange(len(trainSet))
+            if test_params.siam_train_pre_proc:
+                train_inputs1[j] = x1
+                train_inputs2[j] = x2
+                train_inputs3[j] = trainSet[k][0]
+            else:
+                train_inputs1[j] = trans(x1)
+                train_inputs2[j] = trans(x2)
+                train_inputs3[j] = trans(trainSet[k][0])
+
+        optimizer.zero_grad()
+        out1, out2, out3 = net(Variable(train_inputs1), Variable(train_inputs2), Variable(train_inputs3))
+        loss = criterion(out1, out2, out3)
+        loss.backward()
+        optimizer.step()
+        running_loss, score = print_stats(epoch, batchCount, loss, running_loss, score)
+        return batchCount + 1, score, running_loss
+
+    def train_triplets_hard(last, i, batch):
+        batchCount, score, running_loss = last
+        # we get a batch of positive couples
+        # for each couple, find a negative such that the embedding is
+        # semi-hard (using the one with smallest distance can collapse
+        # the model, according to Schroff et al - FaceNet) so find
+        # one that lies in the margin (alpha) used by the loss to
+        # discriminate between positive and negative pair
+        n = len(batch)
+        train_inputs1 = tensor(n, C, H, W)
+        train_inputs2 = tensor(n, C, H, W)
+        train_inputs3 = tensor(n, C, H, W)
+        for j, ((x1, x2), (lab, (i1, i2))) in enumerate(batch):
+            em1 = embeddings[i1]
+            sqdiff_pos = (em1 - embeddings[i2]).pow_(2).sum()
+            x3 = None
+            for k, embedding in enumerate(embeddings):
+                if trainSet[k][1] == lab:
+                    continue
+                sqdiff_neg = (em1 - embedding).pow_(2).sum()
+                if sqdiff_pos < sqdiff_neg and sqdiff_pos + test_params.siam_triplet_margin > sqdiff_neg:
+                    x3 = trainSet[k][0]
+                    break
+            if x3 is None:
+                # print('cannot find a semi-hard negative for {0}-{1}-{2}. falling back to random negative'.format(i1, i2, lab))
+                k = random.randrange(len(trainSet))
+                while (trainSet[k][1] == lab):
+                    k = random.randrange(len(trainSet))
+                x3 = trainSet[k][0]
+            if test_params.siam_train_pre_proc:
+                train_inputs1[j] = x1
+                train_inputs2[j] = x2
+                train_inputs3[j] = x3
+            else:
+                train_inputs1[j] = trans(x1)
+                train_inputs2[j] = trans(x2)
+                train_inputs3[j] = trans(x3)
+
+        optimizer.zero_grad()
+        out1, out2, out3 = net(Variable(train_inputs1), Variable(train_inputs2), Variable(train_inputs3))
+        loss = criterion(out1, out2, out3)
+        loss.backward()
+        optimizer.step()
+        running_loss, score = print_stats(epoch, batchCount, loss, running_loss, score)
+        return batchCount + 1, score, running_loss
+
+    if test_params.siam_train_mode == 'couples':
+        couples = get_couples(trainSet, test_params.siam_couples_percentage)
+        num_train = len(couples)
+        num_pos = sum(1 for _, lab in couples if lab == 1)
+        print('training set size:', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
+        f = train_couples
+    else:
+        # for triplets, only fold over positive couples.
+        # then choose negative for each couple specifically
+        couples = get_couples(trainSet, -1)
+        num_pos = len(couples)
+        print('#pos:', num_pos)
+        if test_params.siam_train_mode == 'triplets':
+            f = train_triplets
+        else:
+            f = train_triplets_hard
 
     # loop over the dataset multiple times
     for epoch in range(test_params.siam_train_epochs):
-        random.shuffle(trainSet)
-        # init = 0, bestScore, 0.0  # batchCount, bestScore, runningLoss
-        # _, bestScore, _ = fold_batches(train_batch, init, trainSet, test_params.siam_train_batch_size)
-        for i in range(len(trainSet)):
-            for j in range(len(trainSet)):
-                for k in range(len(trainSet)):
-                    if trainSet[i][1] != trainSet[j][1] or trainSet[i][1] == trainSet[k][1]:
-                        continue
+        # for the 'hard' triplets, we need to know the embeddings of all
+        # images at each epoch. so pre-calculate them here
+        if test_params.siam_train_mode == 'triplets_hard':
+            init = tensor(len(trainSet), test_params.siam_feature_dim)
+            net.eval()
+            embeddings = fold_batches(embeddings_batch, init, trainSet, test_params.siam_test_batch_size)
+            net.train()
 
-                    C, H, W = test_params.siam_input_size
-                    train_inputs1 = tensor(1, C, H, W)
-                    train_inputs2 = tensor(1, C, H, W)
-                    train_inputs3 = tensor(1, C, H, W)
-                    train_inputs1[0] = trainSet[i][0]
-                    train_inputs2[0] = trainSet[j][0]
-                    train_inputs3[0] = trainSet[k][0]
-                    optimizer.zero_grad()
-                    out1, out2, out3 = net(Variable(train_inputs1), Variable(train_inputs2), Variable(train_inputs3))
-                    loss = criterion(out1, out2, out3)
-                    loss.backward()
-                    optimizer.step()
-
-                    print(loss.data[0])
+        random.shuffle(couples)
+        init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
+        _, bestScore, _ = fold_batches(f, init, couples, test_params.siam_train_batch_size)
 
 
 def main():
@@ -547,10 +664,6 @@ def main():
     # for i in range(len(trainSet)):
     #     testRefSet.append((transforms.Scale(227)(trainSet[i][0]), trainSet[i][1]))
 
-    couples = get_couples(trainSet, test_params.siam_couples_percentage)
-    num_train = len(couples)
-    num_pos = sum(1 for _, lab in couples if lab == 1)
-    print('training set size: ', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
 
     if test_params.finetuning:
         class_net = TuneClassif(models.resnet152(pretrained=True), len(labels), untrained_blocks=test_params.untrained_blocks)
@@ -584,10 +697,14 @@ def main():
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=test_params.siam_lr, momentum=test_params.siam_momentum, weight_decay=test_params.siam_weight_decay)
     # criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.siam_cos_margin, size_average=test_params.siam_loss_avg)
-    criterion = TripletLoss(margin=0.2)
+    if test_params.siam_train_mode == 'couples':
+        criterion = nn.loss.CosineEmbeddingLoss(margin=test_params.siam_cos_margin, size_average=test_params.siam_loss_avg)
+    else:
+        criterion = TripletLoss(margin=test_params.siam_triplet_margin, size_average=test_params.siam_loss_avg)
     print('Starting descriptor training')
     testset_tuple = (testSet, trainSet)
-    score = test_print_siamese(net, testset_tuple, test_params.siam_test_batch_size)
+    # score = test_print_siamese(net, testset_tuple, test_params.siam_test_batch_size)
+    score = 0
     train_siamese(net, trainSet, testset_tuple, labels, criterion, optimizer, bestScore=score)
     print('Finished descriptor training')
 

@@ -146,8 +146,10 @@ class Siamese1(nn.Module):
         return x
 
     def forward(self, x1, x2=None, x3=None):
-        if self.training:
+        if self.training and x3:
             return self.forward_single(x1), self.forward_single(x2), self.forward_single(x3)
+        elif self.training:
+            return self.forward_single(x1), self.forward_single(x2)
         else:
             return self.forward_single(x1)
 
@@ -222,10 +224,10 @@ class TripletL(Function):
         self.margin = margin
 
     def forward(self, anchor, pos, neg):
-        sqdiff = anchor.add(-1, pos).pow_(2)
-        sqdiff = anchor.add(-1, neg).pow_(2)
-        loss = sqdiff.sum(1)
-        loss.add_(-1, sqdiff.sum(1))
+        sqdiff_pos = anchor.add(-1, pos).pow_(2)
+        sqdiff_neg = anchor.add(-1, neg).pow_(2)
+        loss = sqdiff_pos.sum(1)
+        loss.add_(-1, sqdiff_neg.sum(1))
         loss.add_(self.margin)
         self.clamp = torch.lt(loss, 0)
         loss[self.clamp] = 0
