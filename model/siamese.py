@@ -218,18 +218,29 @@ class MetricLoss(nn.Module):
 
 class TripletL(Function):
 
-    def __init__(self, margin, size_average=True):
+    def __init__(self, margin, size_average=True, normalized=True):
         super(TripletL, self).__init__()
         self.size_average = size_average
         self.margin = margin
+        self.normalized = normalized
 
+    # calculate for each sample i:
+    # ||anchor_i - pos_i||^2 - ||anchor_i - neg_i||^2 + margin
+    # then clamp to positive values and sum over all samples
+    # when normalized, ||x1-x2||^2 = 2 - 2x1.x2
+    # so the loss for i becomes: 2 anchor_i . neg_i - 2 anchor_i . pos_i
     def forward(self, anchor, pos, neg):
-        sqdiff_pos = anchor.add(-1, pos).pow_(2)
-        sqdiff_neg = anchor.add(-1, neg).pow_(2)
-        loss = sqdiff_pos.sum(1)
-        loss.add_(-1, sqdiff_neg.sum(1))
-        loss.add_(self.margin)
-        self.clamp = torch.lt(loss, 0)
+        if self.normalized:
+            loss = (anchor * neg).sum(1).mul_(2)
+            loss.add_(-2, (anchor * pos).sum(1))
+            loss.add_(self.margin)
+        else:
+            sqdiff_pos = (anchor - pos).pow_(2)
+            sqdiff_neg = (anchor - neg).pow_(2)
+            loss = sqdiff_pos.sum(1)
+            loss.add_(-1, sqdiff_neg.sum(1))
+            loss.add_(self.margin)
+        self.clamp = torch.le(loss, 0)
         loss[self.clamp] = 0
         loss = loss.sum(0).view(1)
         if self.size_average:
@@ -238,19 +249,25 @@ class TripletL(Function):
         return loss
 
     def backward(self, grad_output):
-        # grad_pos = -2(x_anchor - x_pos)
-        # grad_neg = 2(x_anchor - x_neg)
-        # grad_anchor = 2(x_anchor - x_pos) - 2(x_anchor - x_neg)
+        # grad_pos = -2(anchor_i - pos_i) for sample i
+        # grad_neg = 2(anchor_i - neg_i)
+        # grad_anchor = 2(anchor_i - pos_i) - 2(anchor_i - neg_i)
         # = -(grad_pos + grad_neg)
+        # if normalized: grad_pos = -2 anchor_i, grad_neg = 2 anchor_i
+        # grad_anchor = 2 neg_i - 2 pos_i
         anchor, pos, neg = self.saved_tensors
+        if self.normalized:
+            grad_anchor = (neg - pos).mul_(2)
+            grad_pos = -2 * anchor
+            grad_neg = -grad_pos
+        else:
+            grad_pos = (anchor - pos).mul_(-2)
+            grad_neg = (anchor - neg).mul_(2)
+            grad_anchor = (grad_pos + grad_neg).mul_(-1)
         c = self.clamp.expand_as(anchor)
-        anchor[c] = 0
-        pos[c] = 0
-        neg[c] = 0
-        anchor_sum = anchor.sum(0)
-        grad_pos = anchor_sum.add(-1, pos.sum(0)).mul_(-2)
-        grad_neg = anchor_sum.add_(-1, neg.sum(0)).mul_(2)
-        grad_anchor = grad_pos.add(grad_neg).mul_(-1)
+        grad_anchor[c] = 0
+        grad_pos[c] = 0
+        grad_neg[c] = 0
 
         if self.size_average:
             grad_anchor.div_(anchor.size(0))
@@ -260,18 +277,16 @@ class TripletL(Function):
             grad_anchor = grad_anchor.mul_(grad_output)
             grad_pos = grad_pos.mul_(grad_output)
             grad_neg = grad_neg.mul_(grad_output)
-        grad_anchor = grad_anchor.expand_as(anchor)
-        grad_pos = grad_pos.expand_as(anchor)
-        grad_neg = grad_neg.expand_as(anchor)
         return grad_anchor, grad_pos, grad_neg
 
 
 class TripletLoss(nn.Module):
 
-    def __init__(self, margin, size_average=True):
+    def __init__(self, margin, size_average=True, normalized=True):
         super(TripletLoss, self).__init__()
         self.size_average = size_average
         self.margin = margin
+        self.normalized = normalized
 
     def forward(self, anchor, pos, neg):
-        return TripletL(self.margin, self.size_average)(anchor, pos, neg)
+        return TripletL(self.margin, self.size_average, self.normalized)(anchor, pos, neg)
