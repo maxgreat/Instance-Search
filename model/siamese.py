@@ -171,16 +171,16 @@ class MetricL(Function):
     def terms(self, input1, input2, y):
         diff = input1 - input2
         energy = diff.norm(1, 1)
-        e = energy * 0 + np.e
-        exp_term = torch.pow(e, -2.77 * energy / 2)
+        e = (energy * 0).add_(np.e)  # fill with e, same shape as energy
+        exp_term = e.pow_((-2.77 * energy).div_(2))
         return diff, energy, exp_term
 
     # target takes values in 1 (good), -1 (bad) so (1-target)/2 is 0 for good pairs and 1 for bad ones, (1+target) / 2 inverse
     def forward(self, input1, input2, y):
         _, energy, exp_term = self.terms(input1, input2, y)
-        loss_g = (1 + y) * energy * energy / 2
-        loss_i = (1 - y) * 2 * exp_term
-        loss = (loss_g + loss_i).sum(0).view(1)
+        loss = energy.mul_(energy).mul_(1 + y).div_(2)
+        loss.add_(exp_term.mul_(1 - y).mul_(2))
+        loss = loss.sum(0).view(1)
         if self.size_average:
             loss.div_(y.size(0))
         self.save_for_backward(input1, input2, y)
@@ -191,11 +191,13 @@ class MetricL(Function):
         diff, energy, exp_term = self.terms(input1, input2, y)
         diff[diff.lt(0)] = -1
         diff[diff.ge(0)] = 1
-        y_g = (1 + y).view(-1, 1).expand_as(input1)
-        y_i = (1 - y).view(-1, 1).expand_as(input1)
         energy = energy.expand_as(input1)
         exp_term = exp_term.expand_as(input1)
-        grad1 = y_g * diff * energy - 2.77 * y_i * diff * exp_term
+        y_g = (1 + y).view(-1, 1).expand_as(input1)
+        y_i = (1 - y).view(-1, 1).expand_as(input1)
+        y_g = y_g.mul(diff).mul_(energy)
+        y_i = y_i.mul(2.77).mul_(diff).mul_(exp_term)
+        grad1 = y_g.add_(-1, y_i)
         grad2 = -grad1
         if self.size_average:
             grad1.div_(y.size(0))

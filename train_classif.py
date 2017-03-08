@@ -1,5 +1,9 @@
 # -*- encoding: utf-8 -*-
 
+from torch.autograd import Variable
+
+from os import path
+
 from utils import *
 from test_params import P
 
@@ -69,7 +73,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
                 train_in[j] = P.classif_train_trans(batch[j][0])
 
         # get the labels
-        lab = tensor_t(torch.LongTensor, P.cuda_device, len(batchSize))
+        lab = tensor_t(torch.LongTensor, P.cuda_device, batchSize)
         for j in range(batchSize):
             lab[j] = labels.index(batch[j][1])
 

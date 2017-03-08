@@ -1,9 +1,14 @@
 # -*- encoding: utf-8 -*-
 
 import torchvision.models as models
+import torch.optim as optim
 from PIL import Image
 
+from os import path
+
 from model.siamese import *
+from train_classif import *
+from train_siam import *
 from dataset import ReadImages
 from test_params import P
 
@@ -69,8 +74,9 @@ def main():
     criterion = nn.CrossEntropyLoss()
     testset_tuple = (testTrainSetClassif, testSetClassif)
     # score = test_print_classif(class_net, testset_tuple, labels)
+    score = 0
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    # train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
+    train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
 
     print('Finished classification training')
     print('Starting descriptor training')

@@ -98,7 +98,7 @@ def tensor_t(t, device, *sizes):
 
 
 def tensor(device, *sizes):
-    return tensor_t(torch.Tensor, *sizes)
+    return tensor_t(torch.Tensor, device, *sizes)
 
 
 # evaluate a function by batches of size batch_size on the set x

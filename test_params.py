@@ -3,7 +3,7 @@
 import tempfile
 import torchvision.transforms as transforms
 from uuid import uuid1
-from os import rename
+from os import rename, path
 from utils import *
 
 
@@ -72,6 +72,9 @@ class TestParams(object):
         # (see FaceNet paper by Schroff et al)
         self.siam_train_mode = 'triplets_hard'
         self.siam_triplet_margin = 0.2
+        # for triplet_hard mode, number of epochs after which we
+        # take only the hardest examples:
+        self.siam_triplets_switch = 10
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
         self.siam_couples_p = 0.9

@@ -1,6 +1,11 @@
 # -*- encoding: utf-8 -*-
 
+from torch.autograd import Variable
+
+from os import path
+
 from utils import *
+from model.siamese import Normalize2DL2
 from test_params import P
 
 # TODO create generator to yield couples of images
@@ -234,6 +239,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         # for normalized vectors x and y, we have ||x-y||^2 = 2 - 2xy
         # so finding a negative example such that ||x-x_p||^2 < ||x-x_n||^2
         # is equivalent to having x.x_p > x.x_n
+        # after x epochs, we only take the hardest negative examples
         n = len(batch)
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
@@ -246,7 +252,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 if trainSet[k][1] == lab:
                     continue
                 sqdist_neg = (em1 - embedding).pow(2).sum()
-                if sqdist_pos >= sqdist_neg:
+                if epoch < P.siam_triplets_switch and sqdist_pos >= sqdist_neg:
                     continue
                 negatives.append((k, sqdist_neg))
             if len(negatives) <= 0:
