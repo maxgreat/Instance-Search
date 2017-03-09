@@ -256,7 +256,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                     continue
                 negatives.append((k, sqdist_neg))
             if len(negatives) <= 0:
-                print('cannot find a semi-hard negative for {0}-{1}-{2}. falling back to random negative'.format(i1, i2, lab))
+                # print('cannot find a semi-hard negative for {0}-{1}-{2}. falling back to random negative'.format(i1, i2, lab))
                 k = random.randrange(len(trainSet))
                 while (trainSet[k][1] == lab):
                     k = random.randrange(len(trainSet))

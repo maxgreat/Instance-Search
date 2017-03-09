@@ -31,30 +31,27 @@ def main():
 
     # open the images (and transform already if possible)
     # do that only if it fits in memory !
-    def trans_dataset(dataset, pre_proc, trans, filter=lambda x, y: True):
-        out = []
+    def trans_dataset(dataset, pre_procs, trans, filters=None):
+        if filters is None:
+            filters = [lambda x, y: True for _ in pre_procs]
+        outs = [[] for _ in pre_procs]
         for im, lab in dataset:
-            if filter(im, lab):
-                im = Image.open(im)
-                if pre_proc:
-                    im = trans(im)
-                out.append((im, lab))
-        return out
+            im_o = Image.open(im)
+            for out, pre_proc, t, f in zip(outs, pre_procs, trans, filters):
+                if f(im, lab):
+                    im_out = t(im_o) if pre_proc else im_o
+                    out.append((im_out, lab))
+        return outs
 
-    def test_filter(im, lab):
-        return lab in labels
+    train_pre_procs = [P.classif_train_pre_proc, P.classif_test_pre_proc, P.siam_train_pre_proc, P.siam_test_pre_proc]
+    train_trans = [P.classif_train_trans, P.classif_test_trans, P.siam_train_trans, P.siam_test_trans]
 
-    trainSetClassif = trans_dataset(trainSetFull, P.classif_train_pre_proc, P.classif_train_trans)
+    trainSetClassif, testTrainSetClassif, trainSetSiam, testTrainSetSiam = trans_dataset(trainSetFull, train_pre_procs, train_trans)
 
-    testTrainSetClassif = trans_dataset(trainSetFull, P.classif_test_pre_proc, P.classif_test_trans)
-
-    testSetClassif = trans_dataset(testSetFull, P.classif_test_pre_proc, P.classif_test_trans, test_filter)
-
-    trainSetSiam = trans_dataset(trainSetFull, P.siam_train_pre_proc, P.siam_train_trans)
-
-    testTrainSetSiam = trans_dataset(trainSetFull, P.siam_test_pre_proc, P.siam_test_trans)
-
-    testSetSiam = trans_dataset(testSetFull, P.siam_test_pre_proc, P.siam_test_trans, test_filter)
+    test_pre_procs = [P.classif_test_pre_proc, P.siam_test_pre_proc]
+    test_trans = [P.classif_test_trans, P.siam_test_trans]
+    test_filters = [lambda im, lab: lab in labels for _ in test_trans]
+    testSetClassif, testSetSiam = trans_dataset(testSetFull, test_pre_procs, test_trans, test_filters)
 
     print('Starting classification training')
 
