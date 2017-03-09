@@ -63,7 +63,7 @@ def main():
     else:
         class_net = models.resnet152()
 
-    class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
+    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
 
     if P.cuda_device >= 0:
         class_net.cuda()
