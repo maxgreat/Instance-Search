@@ -291,7 +291,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             return last + loss.data[0]
 
         optimizer.zero_grad()
-        loss = fold_batches(micro_batch, None, batch, P.siam_train_micro_batch)
+        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
         return batchCount + 1, score, running_loss
