@@ -166,8 +166,8 @@ class MetricL(Function):
         super(MetricL, self).__init__()
         self.size_average = size_average
 
-    # TODO: everything could be done inplace,
-    # more difficult though (for norm see torch.nn._functions.loss.Cosine...)
+    # TODO: more things could be done inplace
+    # this is difficult and probs unnecessary though
     def terms(self, input1, input2, y):
         diff = input1 - input2
         energy = diff.norm(1, 1)

@@ -8,14 +8,14 @@ from utils import *
 from model.siamese import Normalize2DL2
 from test_params import P
 
-# TODO create generator to yield couples of images
-# / triplets (need a way to identify positive couples for each images,
-# then iterate over all others to create triples)
+# TODO possibly transform all images before creating couples/triplets
+# when using random transformations, this will require a fixed number of
+# transformations per image (need to decide on that number)
 
 
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
-# for each pair of images, this only considers the maximal similarity (not the average precision/ranking on the ref set). TODO
+# for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
 def test_descriptor_net(net, testSet, testRefSet, normalized=True):
     normalize_rows = Normalize2DL2()
 
@@ -119,7 +119,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
 def siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score):
     disp_int = P.siam_loss_int
     test_int = P.siam_test_int
-    running_loss += loss.data[0]
+    running_loss += loss
     if batchCount % disp_int == disp_int - 1:
         print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, running_loss / disp_int))
         running_loss = 0.0
@@ -138,24 +138,27 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         # TODO
 
         # get the inputs
-        n = len(batch)
-        train_in1 = tensor(P.cuda_device, n, C, H, W)
-        train_in2 = tensor(P.cuda_device, n, C, H, W)
-        train_labels = tensor(P.cuda_device, n)
-        for j, ((im1, im2), lab) in enumerate(batch):
-            if P.siam_train_pre_proc:
-                train_in1[j] = im1
-                train_in2[j] = im2
-            else:
-                train_in1[j] = trans(im1)
-                train_in2[j] = trans(im2)
-            train_labels[j] = lab
+        def micro_batch(last, i, batch):
+            n = len(batch)
+            train_in1 = tensor(P.cuda_device, n, C, H, W)
+            train_in2 = tensor(P.cuda_device, n, C, H, W)
+            train_labels = tensor(P.cuda_device, n)
+            for j, ((im1, im2), lab) in enumerate(batch):
+                if P.siam_train_pre_proc:
+                    train_in1[j] = im1
+                    train_in2[j] = im2
+                else:
+                    train_in1[j] = trans(im1)
+                    train_in2[j] = trans(im2)
+                train_labels[j] = lab
+            out1, out2 = net(Variable(train_in1), Variable(train_in2))
+            loss = criterion(out1, out2, Variable(train_labels))
+            loss.backward()
+            return last + loss.data[0]
 
         # zero the parameter gradients, then forward + back prop
         optimizer.zero_grad()
-        out1, out2 = net(Variable(train_in1), Variable(train_in2))
-        loss = criterion(out1, out2, Variable(train_labels))
-        loss.backward()
+        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
         return batchCount + 1, score, running_loss
@@ -169,7 +172,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
     for epoch in range(P.siam_train_epochs):
         random.shuffle(couples)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(f, init, couples, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_couples, init, couples, P.siam_train_batch_size)
 
 
 def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
@@ -201,29 +204,33 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
 
     def train_triplets(last, i, batch):
         batchCount, score, running_loss = last
-        # we get a batch of positive couples
-        # find random negatives for each couple
-        n = len(batch)
-        train_in1 = tensor(P.cuda_device, n, C, H, W)
-        train_in2 = tensor(P.cuda_device, n, C, H, W)
-        train_in3 = tensor(P.cuda_device, n, C, H, W)
-        for j, (lab, _, (x1, x2)) in enumerate(batch):
-            k = random.randrange(len(trainSet))
-            while (trainSet[k][1] == lab):
+
+        def micro_batch(last, i, batch):
+            n = len(batch)
+            train_in1 = tensor(P.cuda_device, n, C, H, W)
+            train_in2 = tensor(P.cuda_device, n, C, H, W)
+            train_in3 = tensor(P.cuda_device, n, C, H, W)
+            # we get a batch of positive couples
+            # find random negatives for each couple
+            for j, (lab, _, (x1, x2)) in enumerate(batch):
                 k = random.randrange(len(trainSet))
-            if P.siam_train_pre_proc:
-                train_in1[j] = x1
-                train_in2[j] = x2
-                train_in3[j] = trainSet[k][0]
-            else:
-                train_in1[j] = trans(x1)
-                train_in2[j] = trans(x2)
-                train_in3[j] = trans(trainSet[k][0])
+                while (trainSet[k][1] == lab):
+                    k = random.randrange(len(trainSet))
+                if P.siam_train_pre_proc:
+                    train_in1[j] = x1
+                    train_in2[j] = x2
+                    train_in3[j] = trainSet[k][0]
+                else:
+                    train_in1[j] = trans(x1)
+                    train_in2[j] = trans(x2)
+                    train_in3[j] = trans(trainSet[k][0])
+            out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
+            loss = criterion(out1, out2, out3)
+            loss.backward()
+            return last + loss.data[0]
 
         optimizer.zero_grad()
-        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-        loss = criterion(out1, out2, out3)
-        loss.backward()
+        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
         return batchCount + 1, score, running_loss
@@ -240,43 +247,51 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         # so finding a negative example such that ||x-x_p||^2 < ||x-x_n||^2
         # is equivalent to having x.x_p > x.x_n
         # after x epochs, we only take the hardest negative examples
-        n = len(batch)
-        train_in1 = tensor(P.cuda_device, n, C, H, W)
-        train_in2 = tensor(P.cuda_device, n, C, H, W)
-        train_in3 = tensor(P.cuda_device, n, C, H, W)
-        for j, (lab, (i1, i2), (x1, x2)) in enumerate(batch):
-            em1 = embeddings[i1]
-            sqdist_pos = (em1 - embeddings[i2]).pow(2).sum()
-            negatives = []
-            for k, embedding in enumerate(embeddings):
-                if trainSet[k][1] == lab:
-                    continue
-                sqdist_neg = (em1 - embedding).pow(2).sum()
-                if epoch < P.siam_triplets_switch and sqdist_pos >= sqdist_neg:
-                    continue
-                negatives.append((k, sqdist_neg))
-            if len(negatives) <= 0:
-                # print('cannot find a semi-hard negative for {0}-{1}-{2}. falling back to random negative'.format(i1, i2, lab))
-                k = random.randrange(len(trainSet))
-                while (trainSet[k][1] == lab):
+
+        # TODO: triplet selection from Gordo (see mail)
+
+        def micro_batch(last, i, batch):
+            n = len(batch)
+            train_in1 = tensor(P.cuda_device, n, C, H, W)
+            train_in2 = tensor(P.cuda_device, n, C, H, W)
+            train_in3 = tensor(P.cuda_device, n, C, H, W)
+            for j, (lab, (i1, i2), (x1, x2)) in enumerate(batch):
+                em1 = embeddings[i1]
+                sqdist_pos = (em1 - embeddings[i2]).pow(2).sum()
+                negatives = []
+                for k, embedding in enumerate(embeddings):
+                    if trainSet[k][1] == lab:
+                        continue
+                    sqdist_neg = (em1 - embedding).pow(2).sum()
+                    if epoch < P.siam_triplets_switch and sqdist_pos >= sqdist_neg:
+                        continue
+                    negatives.append((k, sqdist_neg))
+                if len(negatives) <= 0:
+                    p = 'cant find semi-hard neg for'
+                    s = 'falling back to random neg'
+                    print('{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
                     k = random.randrange(len(trainSet))
-                x3 = trainSet[k][0]
-            else:
-                k3 = min(negatives, key=lambda x: x[1])[0]
-                x3 = trainSet[k3][0]
-            if P.siam_train_pre_proc:
-                train_in1[j] = x1
-                train_in2[j] = x2
-                train_in3[j] = x3
-            else:
-                train_in1[j] = trans(x1)
-                train_in2[j] = trans(x2)
-                train_in3[j] = trans(x3)
+                    while (trainSet[k][1] == lab):
+                        k = random.randrange(len(trainSet))
+                    x3 = trainSet[k][0]
+                else:
+                    k3 = min(negatives, key=lambda x: x[1])[0]
+                    x3 = trainSet[k3][0]
+                if P.siam_train_pre_proc:
+                    train_in1[j] = x1
+                    train_in2[j] = x2
+                    train_in3[j] = x3
+                else:
+                    train_in1[j] = trans(x1)
+                    train_in2[j] = trans(x2)
+                    train_in3[j] = trans(x3)
+            out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
+            loss = criterion(out1, out2, out3)
+            loss.backward()
+            return last + loss.data[0]
 
         optimizer.zero_grad()
-        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-        loss = criterion(out1, out2, out3)
-        loss.backward()
+        loss = fold_batches(micro_batch, None, batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
         return batchCount + 1, score, running_loss

@@ -19,7 +19,7 @@ class TestParams(object):
         self.mean_std_file = 'data/cli.txt' if self.dataset_name == 'CLICIDE' else 'data/fou.txt'
         self.finetuning = True
         self.save_dir = 'data'
-        self.cuda_device = 1
+        self.cuda_device = 0
 
         # in ResNet, before first layer, there are 2 modules with parameters.
         # then number of blocks per layers:
@@ -61,7 +61,7 @@ class TestParams(object):
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
-        self.siam_test_batch_size = 256
+        self.siam_test_batch_size = 16
         self.siam_test_pre_proc = True
         self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
 
@@ -79,6 +79,7 @@ class TestParams(object):
         self.siam_train_pre_proc = False
         self.siam_couples_p = 0.9
         self.siam_train_batch_size = 256
+        self.siam_train_micro_batch = 16
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
