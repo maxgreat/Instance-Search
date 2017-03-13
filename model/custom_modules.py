@@ -145,22 +145,23 @@ class TripletLossFun(Function):
         self.normalized = normalized
 
     # calculate for each sample i:
-    # ||anchor_i - pos_i||^2 - ||anchor_i - neg_i||^2 + margin
+    # 1/2 (||anchor_i - pos_i||^2 - ||anchor_i - neg_i||^2 + 2margin)
     # then clamp to positive values and sum over all samples
     # when normalized, ||x1-x2||^2 = 2 - 2x1.x2
-    # so the loss for i becomes: 2 anchor_i . neg_i - 2 anchor_i . pos_i
+    # so the loss for i becomes: anchor_i . neg_i - anchor_i . pos_i + margin
     def forward(self, anchor, pos, neg):
         self.save_for_backward(anchor, pos, neg)
         if self.normalized:
-            loss = (anchor * neg).sum(1).mul_(2)
-            loss.add_(-2, (anchor * pos).sum(1))
+            loss = (anchor * neg).sum(1)
+            loss.add_(-1, (anchor * pos).sum(1))
             loss.add_(self.margin)
         else:
             sqdiff_pos = (anchor - pos).pow_(2)
             sqdiff_neg = (anchor - neg).pow_(2)
             loss = sqdiff_pos.sum(1)
             loss.add_(-1, sqdiff_neg.sum(1))
-            loss.add_(self.margin)
+            loss.add_(self.margin * 2)
+            loss.div_(2)
         self.clamp = torch.le(loss, 0)
         loss[self.clamp] = 0
         loss = loss.sum(0).view(1)
@@ -169,21 +170,21 @@ class TripletLossFun(Function):
         return loss
 
     def backward(self, grad_output):
-        # grad_pos = -2(anchor_i - pos_i) for sample i
-        # grad_neg = 2(anchor_i - neg_i)
-        # grad_anchor = 2(anchor_i - pos_i) - 2(anchor_i - neg_i)
-        # = -(grad_pos + grad_neg)
-        # if normalized: grad_pos = -2 anchor_i, grad_neg = 2 anchor_i
-        # grad_anchor = 2 neg_i - 2 pos_i
+        # grad_pos = -(anchor_i - pos_i) for sample i
+        # grad_neg = (anchor_i - neg_i)
+        # grad_anchor = (anchor_i - pos_i) - (anchor_i - neg_i)
+        # = (neg_i - pos_i)
+        # if normalized: grad_pos = -anchor_i, grad_neg = anchor_i
+        # grad_anchor = neg_i - pos_i
         anchor, pos, neg = self.saved_tensors
         if self.normalized:
-            grad_anchor = (neg - pos).mul_(2)
-            grad_pos = -2 * anchor
+            grad_anchor = neg - pos
+            grad_pos = -anchor
             grad_neg = -grad_pos
         else:
-            grad_pos = (anchor - pos).mul_(-2)
-            grad_neg = (anchor - neg).mul_(2)
-            grad_anchor = (grad_pos + grad_neg).mul_(-1)
+            grad_anchor = neg - pos
+            grad_pos = pos - anchor
+            grad_neg = anchor - neg
         c = self.clamp.expand_as(anchor)
         grad_anchor[c] = 0
         grad_pos[c] = 0
