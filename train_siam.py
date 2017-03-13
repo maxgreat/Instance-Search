@@ -5,7 +5,7 @@ from torch.autograd import Variable
 from os import path
 
 from utils import *
-from model.siamese import Normalize2DL2
+from model.custom_modules import NormalizeL2Fun
 from test_params import P
 
 # TODO possibly transform all images before creating couples/triplets
@@ -17,7 +17,7 @@ from test_params import P
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
 def test_descriptor_net(net, testSet, testRefSet, normalized=True):
-    normalize_rows = Normalize2DL2()
+    normalize_rows = NormalizeL2Fun()
 
     def eval_batch_ref(last, i, batch):
         maxSim, maxLabel, sum_pos, sum_neg, out1, testLabels = last
