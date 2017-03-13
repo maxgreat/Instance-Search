@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import torch
+import types
 import random
 import numpy as np
 import functools
@@ -16,11 +17,19 @@ def readMeanStd(fname):
     return mean, std
 
 
-# ---------------------- Image transformations -----------------
+# ----------------------- String utils -------------------------
+def fun_str(f):
+    if f.__class__ in (types.FunctionType, types.BuiltinFunctionType, types.BuiltinMethodType):
+        return f.__name__
+    else:
+        return f.__class__.__name__
+
+
 def trans_str(trans):
-    return ','.join(str(t) for t in trans.transforms)
+    return ','.join(fun_str(t) for t in trans.transforms)
 
 
+# ---------------------- Image transformations -----------------
 # pad a PIL image to a square
 def pad_square(img):
     longer_side = max(img.size)

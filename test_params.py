@@ -2,6 +2,7 @@
 
 import tempfile
 import torchvision.transforms as transforms
+import torchvision.models as models
 from uuid import uuid1
 from os import rename, path
 from utils import *
@@ -18,6 +19,7 @@ class TestParams(object):
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.mean_std_file = 'data/cli.txt' if self.dataset_name == 'CLICIDE' else 'data/fou.txt'
         self.finetuning = True
+        self.cnn_model = models.resnet152
         self.save_dir = 'data'
         self.cuda_device = 0
 
@@ -95,9 +97,10 @@ class TestParams(object):
             if name == 'uuid':
                 continue
             if name in ('classif_test_trans', 'classif_train_trans', 'siam_test_trans', 'siam_train_trans'):
-                f.write('{0}:{1}\n'.format(name, trans_str(value)))
-            else:
-                f.write('{0}:{1}\n'.format(name, value))
+                value = trans_str(value)
+            elif name == 'cnn_model':
+                value = fun_str(value)
+            f.write('{0}:{1}\n'.format(name, value))
         f.close()
 
     def save_uuid(self, prefix):

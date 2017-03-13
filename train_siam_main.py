@@ -1,6 +1,5 @@
 # -*- encoding: utf-8 -*-
 
-import torchvision.models as models
 import torch.optim as optim
 from PIL import Image
 
@@ -56,9 +55,9 @@ def main():
     print('Starting classification training')
 
     if P.finetuning:
-        class_net = TuneClassif(models.resnet152(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
+        class_net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
     else:
-        class_net = models.resnet152()
+        class_net = P.cnn_model()
 
     # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
 
