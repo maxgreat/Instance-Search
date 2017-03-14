@@ -69,8 +69,8 @@ def main():
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
     criterion = nn.CrossEntropyLoss()
     testset_tuple = (testTrainSetClassif, testSetClassif)
-    # score = test_print_classif(class_net, testset_tuple, labels)
-    score = 0
+    score = test_print_classif(class_net, testset_tuple, labels)
+    # score = 0
     # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
     train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
 
@@ -93,8 +93,8 @@ def main():
     else:
         criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
     testset_tuple = (testSetSiam, testTrainSetSiam)
-    # score = test_print_siamese(net, testset_tuple, P.siam_test_batch_size)
-    score = 0
+    score = test_print_siamese(net, testset_tuple, P.siam_test_batch_size)
+    # score = 0
     if P.siam_train_mode == 'couples':
         f = train_siam_couples
     else:

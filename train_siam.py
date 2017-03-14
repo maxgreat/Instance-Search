@@ -28,6 +28,8 @@ def test_descriptor_net(net, testSet, testRefSet, normalized=True):
                 test_in2[k] = refIm
             else:
                 test_in2[k] = P.siam_test_trans(refIm)
+            test_in2[k] = norm_image_t(test_in2[k])
+
         out2 = net(Variable(test_in2, volatile=True)).data
         if not normalized:
             out2 = normalize_rows(out2)
@@ -50,6 +52,8 @@ def test_descriptor_net(net, testSet, testRefSet, normalized=True):
                 test_in1[j] = testIm
             else:
                 test_in1[j] = P.siam_test_trans(testIm)
+            test_in1[j] = norm_image_t(test_in1[j])
+
         out1 = net(Variable(test_in1, volatile=True)).data
         if not normalized:
             out1 = normalize_rows(out1)
@@ -71,13 +75,9 @@ def test_descriptor_net(net, testSet, testRefSet, normalized=True):
 def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     def print_stats(prefix, c, t, avg_pos, avg_neg, avg_max):
         s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\n'.format(c, t, float(c) / t)
-        s2 = 'AVG cosine sim values: pos: {0:.4f}, neg: {1:.4f}, max: {2:.4f}\n'.format(avg_pos, avg_neg, avg_max)
+        s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
-        avg_pos = 2 - 2 * avg_pos
-        avg_neg = 2 - 2 * avg_neg
-        avg_max = 2 - 2 * avg_max
-        s3 = 'AVG squared dist values: pos: {0:.4f}, neg: {1:.4f}, max: {2:.4f}'.format(avg_pos, avg_neg, avg_max)
-        print(prefix + s1 + s2 + s3)
+        print(prefix + s1 + s2)
 
     testSet, testRefSet = testset_tuple
     net.eval()
@@ -197,6 +197,8 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 test_in[j] = batch[j][0]
             else:
                 test_in[j] = P.siam_test_trans(batch[j][0])
+            test_in[j] = norm_image_t(test_in[j])
+
         out = net(Variable(test_in, volatile=True))
         for j in range(n):
             embeddings[i + j] = out.data[j]

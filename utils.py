@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import torch
+import torchvision.transforms as transforms
 import types
 import random
 import numpy as np
@@ -30,6 +31,14 @@ def trans_str(trans):
 
 
 # ---------------------- Image transformations -----------------
+def norm_image_t(tensor):
+    m = s = []
+    for t in tensor:
+        m.append(t.mean())
+        s.append(t.std())
+    return transforms.Normalize(m, s)(tensor)
+
+
 # pad a PIL image to a square
 def pad_square(img):
     longer_side = max(img.size)

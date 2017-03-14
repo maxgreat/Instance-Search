@@ -17,7 +17,7 @@ class TestParams(object):
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_227sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
-        self.mean_std_file = 'data/cli.txt' if self.dataset_name == 'CLICIDE' else 'data/fou.txt'
+        self.mean_std_file = 'data/CLICIDE_227sq_train_ms.txt' if self.dataset_name == 'CLICIDE' else 'data/fourviere_227sq_train_ms.txt'
         self.finetuning = True
         self.cnn_model = models.resnet152
         self.save_dir = 'data'
@@ -37,7 +37,8 @@ class TestParams(object):
         self.classif_input_size = (3, 227, 227)
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
-        self.classif_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+        # normalization done per image during test
+        self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
 
         # Classification net training params
         self.classif_train_epochs = 0
@@ -48,7 +49,7 @@ class TestParams(object):
         self.classif_train_aug_vrange = vr = 0.2
         self.classif_train_aug_hsrange = hsr = 0.2
         self.classif_train_aug_vsrange = vsr = 0.2
-        self.classif_train_trans = transforms.Compose((random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)))
+        self.classif_train_trans = transforms.Compose([random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.classif_lr = 1e-4
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
@@ -65,7 +66,8 @@ class TestParams(object):
         self.siam_loss_avg = False
         self.siam_test_batch_size = 32
         self.siam_test_pre_proc = True
-        self.siam_test_trans = transforms.Compose((transforms.ToTensor(), transforms.Normalize(m, s)))
+        # normalization done per image during test
+        self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
 
         # Siamese net training params
         # for train mode: 'couples': using cosine loss (and all couples)

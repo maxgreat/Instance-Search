@@ -23,6 +23,8 @@ def test_classif_net(net, testSet, labels, batchSize):
                 test_in[j] = testIm
             else:
                 test_in[j] = P.classif_test_trans(testIm)
+            test_in[j] = norm_image_t(test_in[j])
+
         out = net(Variable(test_in, volatile=True)).data
         _, predicted = torch.max(out, 1)
         total += len(batch)
