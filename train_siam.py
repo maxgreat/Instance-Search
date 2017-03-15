@@ -14,60 +14,67 @@ from test_params import P
 # transformations per image (need to decide on that number)
 
 
+# get all embeddings (feature vectors) of a dataset from a given net
+# the net is assumed to be in eval mode
+def get_embeddings(net, dataset):
+    C, H, W = P.siam_input_size
+    test_trans = transforms.Compose([])
+    if not P.siam_test_pre_proc:
+        test_trans.transforms.append(P.siam_test_trans)
+    if P.test_norm_per_image:
+        test_trans.transforms.append(norm_image_t)
+
+    def batch(last, i, batch):
+        embeddings = last
+        n = len(batch)
+        test_in = tensor(P.cuda_device, n, C, H, W)
+        for j in range(n):
+            test_in[j] = test_trans(batch[j][0])
+
+        out = net(Variable(test_in, volatile=True))
+        for j in range(n):
+            embeddings[i + j] = out.data[j]
+        return embeddings
+    device = P.cuda_device
+    if len(dataset) * P.siam_feature_dim * 4 > 2 ** 30:
+        # if the embeddings use more than 1GB of memory,
+        # get them onto CPU to be sure they fit in memory
+        device = -1
+    init = tensor(device, len(dataset), P.siam_feature_dim)
+    return fold_batches(batch, init, dataset, P.siam_test_batch_size)
+
+
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
 def test_descriptor_net(net, testSet, testRefSet, normalized=True):
-    normalize_rows = NormalizeL2Fun()
-    trans = transforms.Compose([])
-    if not P.siam_test_pre_proc:
-        trans.transforms.append(P.siam_test_trans)
-    if P.test_norm_per_image:
-        trans.transforms.append(norm_image_t)
+    test_embeddings = get_embeddings(net, testSet)
+    ref_embeddings = get_embeddings(net, testRefSet)
+    if not normalized:
+        test_embeddings = NormalizeL2Fun()(test_embeddings)
+        ref_embeddings = NormalizeL2Fun()(ref_embeddings)
 
-    def eval_batch_ref(last, i, batch):
-        maxSim, maxLabel, sum_pos, sum_neg, out1, testLabels = last
-        C, H, W = P.siam_input_size
-        test_in2 = tensor(P.cuda_device, len(batch), C, H, W)
-        for k, (refIm, _) in enumerate(batch):
-            test_in2[k] = trans(refIm)
+    # calculate all similarities as a simple matrix multiplication
+    # since inputs are normalized, thus cosine = dot product
+    sim = torch.mm(test_embeddings, ref_embeddings.t())
+    maxSim, maxIdx = torch.max(sim, 1)
+    maxLabel = []
+    for i in range(sim.size(0)):
+        # get label from ref set which obtained highest score
+        maxLabel.append(testRefSet[maxIdx[i, 0]][1])
 
-        out2 = net(Variable(test_in2, volatile=True)).data
-        if not normalized:
-            out2 = normalize_rows(out2)
-        sim = torch.mm(out1, out2.t())
-        sum_pos += sum(sim[j, k] for j, testLabel in enumerate(testLabels) for k, (_, refLabel) in enumerate(batch) if testLabel == refLabel)
-        sum_neg += (sim.sum() - sum_pos)
-        batchMaxSim, batchMaxIdx = torch.max(sim, 1)
-        for j in range(maxSim.size(0)):
-            if (batchMaxSim[j, 0] > maxSim[j, 0]):
-                maxSim[j, 0] = batchMaxSim[j, 0]
-                maxLabel[j] = batch[batchMaxIdx[j, 0]][1]
-        return maxSim, maxLabel, sum_pos, sum_neg, out1, testLabels
-
-    def eval_batch_test(last, i, batch):
-        correct, total, sum_pos, sum_neg, sum_max, lab_dict = last
-        C, H, W = P.siam_input_size
-        test_in1 = tensor(P.cuda_device, len(batch), C, H, W)
-        for j, (testIm, _) in enumerate(batch):
-            test_in1[j] = trans(testIm)
-
-        out1 = net(Variable(test_in1, volatile=True)).data
-        if not normalized:
-            out1 = normalize_rows(out1)
-        # max similarity, max label, outputs
-        maxSim = tensor(P.cuda_device, len(batch), 1).fill_(-2)
-        init = maxSim, [None for _ in batch], sum_pos, sum_neg, out1, [lab for im, lab in batch]
-        maxSim, maxLabel, sum_pos, sum_neg, _, _ = fold_batches(eval_batch_ref, init, testRefSet, P.siam_test_batch_size)
-        sum_max += maxSim.sum()
-        for j, (_, lab) in enumerate(batch):
-            lab_dict[lab].append((maxLabel[j], 1))
-        total += len(batch)
-        correct += sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(batch))
-        return correct, total, sum_pos, sum_neg, sum_max, lab_dict
-
-    lab_dict = dict([(lab, []) for _, lab in testSet])
-    return fold_batches(eval_batch_test, (0, 0, 0.0, 0.0, 0.0, lab_dict), testSet, P.siam_test_batch_size)
+    # stats
+    correct = sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(testSet))
+    total = len(testSet)
+    sum_pos = sum(sim[i, j] for i, (_, testLabel) in enumerate(testSet) for j, (_, refLabel) in enumerate(testRefSet) if testLabel == refLabel)
+    sum_neg = sim.sum() - sum_pos
+    sum_max = maxSim.sum()
+    lab_dict = dict([(lab, {}) for _, lab in testSet])
+    for j, (_, lab) in enumerate(testSet):
+        d = lab_dict[lab]
+        lab = maxLabel[j]
+        d.setdefault(lab, d.get(lab, 0) + 1)
+    return correct, total, sum_pos, sum_neg, sum_max, lab_dict
 
 
 def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
@@ -81,17 +88,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     net.eval()
     correct, tot, sum_pos, sum_neg, sum_max, lab_dict = test_descriptor_net(net, testSet, testRefSet)
     # can save labels dictionary (predicted labels for all test labels)
-    # for lab in lab_dict:
-    #     def red_f(x, y):
-    #         return x[0], x[1] + y[1]
-    #     L = sorted(lab_dict[lab], key=lambda x: x[0])
-    #     g = itertools.groupby(L, key=lambda x: x[0])
-    #     red = [reduce(red_f, group) for _, group in g]
-    #     lab_dict[lab] = sorted(red, key=lambda x: -x[1])
-    # f = open(saveDir + 'lab_dict_' + str(epoch) + '.txt', 'w')
-    # for lab in lab_dict:
-    #     f.write(str(lab) + ':' + str(lab_dict[lab]) + '\n')
-    # f.close()
+    # TODO
 
     num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
     num_neg = len(testSet) * len(testRefSet) - num_pos
@@ -187,23 +184,6 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])
-    test_trans = transforms.Compose([])
-    if not P.siam_test_pre_proc:
-        test_trans.transforms.append(P.siam_test_trans)
-    if P.test_norm_per_image:
-        test_trans.transforms.append(norm_image_t)
-
-    def embeddings_batch(last, i, batch):
-        embeddings = last
-        n = len(batch)
-        test_in = tensor(P.cuda_device, n, C, H, W)
-        for j in range(n):
-            test_in[j] = test_trans(batch[j][0])
-
-        out = net(Variable(test_in, volatile=True))
-        for j in range(n):
-            embeddings[i + j] = out.data[j]
-        return embeddings
 
     def train_triplets(last, i, batch):
         batchCount, score, running_loss = last
@@ -325,11 +305,10 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         # for the 'hard' triplets, we need to know the embeddings of all
         # images at each epoch. so pre-calculate them here
         if P.siam_choice_mode == 'hard':
-            init = tensor(P.cuda_device, len(trainSet), P.siam_feature_dim)
             net.eval()
             # use the test-train set to obtain embeddings
             # (since it may be transformed differently than train set)
-            embeddings = fold_batches(embeddings_batch, init, testset_tuple[1], P.siam_test_batch_size)
+            embeddings = get_embeddings(net, testset_tuple[1])
             net.train()
 
         # for triplets, need to make sure the couples are evenly
