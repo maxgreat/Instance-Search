@@ -14,14 +14,16 @@ from test_params import P
 
 def get_class_net(labels):
     if P.finetuning and P.classif_train:
-        return TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
+        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
     elif P.finetuning:
-        feature_avg_size = None
-        if P.feature_net_average:
-            feature_avg_size = P.siam_feature_out_size2d
-        return FeatureNet(P.cnn_model(pretrained=True), feature_avg_size)
+        net = FeatureNet(P.cnn_model(pretrained=True), P.siam_feature_out_size2d, P.feature_net_average, P.feature_net_classify)
     else:
-        return P.cnn_model()
+        net = P.cnn_model()
+    if P.cuda_device >= 0:
+        net.cuda()
+    else:
+        net.cpu()
+    return net
 
 
 def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
@@ -29,13 +31,8 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
         return None
 
     class_net = get_class_net(labels)
-    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
+    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt')).cuda()
 
-    if P.cuda_device >= 0:
-        class_net.cuda()
-    else:
-        class_net.cpu()
-    class_net.train()
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
     criterion = nn.CrossEntropyLoss()
     testset_tuple = (testTrainSetClassif, testSetClassif)
@@ -58,7 +55,6 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
         net.cuda()
     else:
         net.cpu()
-    net.train()
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
     # criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
@@ -69,7 +65,7 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
     testset_tuple = (testSetSiam, testTrainSetSiam)
     if P.siam_test_upfront:
         print('Upfront testing of Siamese net')
-        score = test_print_siamese(net, testset_tuple, P.siam_test_batch_size)
+        score = test_print_siamese(net, testset_tuple)
     else:
         score = 0
     if P.siam_train_mode == 'couples':
@@ -125,6 +121,9 @@ def main():
     class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
     if not P.classif_train:
         class_net = get_class_net(labels)
+    if P.siam_test_class_upfront:
+        print('Upfront testing of class/feature net as global descriptor')
+        test_print_siamese(class_net, (testSetSiam, testTrainSetSiam))
     siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam)
 
 

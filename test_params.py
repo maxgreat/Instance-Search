@@ -63,9 +63,14 @@ class TestParams(object):
         self.classif_loss_int = 10
         self.classif_test_int = 100
 
+        # if there is no finetuned classification net, settings for
+        # underlying feature net
+        self.feature_net_average = True
+        self.feature_net_classify = False
+
         # Siamese net general and testing params
-        self.feature_net_average = False
         self.siam_test_upfront = True
+        self.siam_test_class_upfront = True
         self.siam_train = False
         self.siam_input_size = (3, 227, 227)
         self.siam_feature_out_size2d = (8, 8)

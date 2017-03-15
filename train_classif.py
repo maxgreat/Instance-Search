@@ -103,6 +103,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             score = test_print_classif(net, testset_tuple, labels, score, epoch + 1)
         return batchCount + 1, score, running_loss
 
+    net.train()
     for epoch in range(P.classif_train_epochs):
         # annealing
         if epoch in P.classif_annealing:

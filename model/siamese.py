@@ -5,6 +5,20 @@ import torchvision.models as models
 from custom_modules import *
 
 
+def get_feature_size(seq, factor=1, default=-1):
+    feature_size = default
+    for module in seq:
+        if isinstance(module, models.resnet.Bottleneck):
+            feature_size = module.conv3.out_channels * factor
+        if isinstance(module, models.resnet.BasicBlock):
+            feature_size = module.conv2.out_channels * factor
+        if isinstance(module, nn.modules.Conv2d):
+            feature_size = module.out_channels * factor
+        if isinstance(module, nn.modules.linear.Linear):
+            feature_size = module.out_features
+    return feature_size
+
+
 def extract_layers(net):
     if isinstance(net, models.ResNet):
         features = [net.conv1, net.bn1, net.relu, net.maxpool]
@@ -27,13 +41,18 @@ class FeatureNet(nn.Module):
         from an underlying CNN, which can be averaged spatially and
         are then returned as a flat vector
     """
-    def __init__(self, net, average_feature_size=None):
+    def __init__(self, net, feature_size2d, average_feature_size=False, classify=False):
         super(FeatureNet, self).__init__()
-        self.features, _, _ = extract_layers(net)
-        self.classifier = None
-        self.feature_reduc = None
-        if average_feature_size:
-            self.feature_reduc = nn.AvgPool2d(average_feature_size)
+        self.features, self.feature_reduc, self.classifier = extract_layers(net)
+        if not classify:
+            self.feature_reduc, self.classifier = None, None
+            factor = feature_size2d[0] * feature_size2d[1]
+            self.feature_size = get_feature_size(self.features, factor)
+            if average_feature_size:
+                self.feature_reduc = nn.AvgPool2d(feature_size2d)
+                self.feature_size /= (feature_size2d[0] * feature_size2d[1])
+        else:
+            self.feature_size = get_feature_size(self.classifier)
         self.norm = NormalizeL2()
 
     def forward(self, x):
@@ -41,6 +60,8 @@ class FeatureNet(nn.Module):
         if self.feature_reduc:
             x = self.feature_reduc(x)
         x = x.view(x.size(0), -1)
+        if self.classifier:
+            x = self.classifier(x)
         x = self.norm(x)
         return x
 
@@ -77,6 +98,7 @@ class TuneClassif(nn.Module):
         for name, module in self.classifier._modules.items():
             if module is classifier[len(classifier._modules) - 1]:
                 self.classifier._modules[name] = nn.Linear(module.in_features, num_classes)
+        self.feature_size = num_classes
 
     def forward(self, x):
         x = self.features(x)
@@ -99,23 +121,15 @@ class Siamese1(nn.Module):
             nn.AvgPool2d(spatial_factor)
         )
         factor = feature_size2d[0] * feature_size2d[1] / (spatial_factor * spatial_factor)
-        for module in self.features:
-            if isinstance(module, models.resnet.Bottleneck):
-                in_features = module.conv3.out_channels * factor
-            if isinstance(module, models.resnet.BasicBlock):
-                in_features = module.conv2.out_channels * factor
-            if isinstance(module, nn.modules.Conv2d):
-                in_features = module.out_channels * factor
+        in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
-            for module in net.classifier:
-                if isinstance(module, nn.modules.linear.Linear):
-                    out_features = module.out_features
+            self.feature_size = get_feature_size(net.classifier)
         else:
-            out_features = feature_dim
+            self.feature_size = feature_dim
         self.feature_reduc1 = nn.Sequential(
             NormalizeL2(),
             Shift(in_features),
-            nn.Linear(in_features, out_features)
+            nn.Linear(in_features, self.feature_size)
         )
         self.feature_reduc2 = NormalizeL2()
 

@@ -14,9 +14,23 @@ from test_params import P
 # transformations per image (need to decide on that number)
 
 
+def get_device_and_size(net, n):
+    # get best device for embeddings, as well as the feature vector size
+    # usually, this is the configured cuda device.
+    # but it could be CPU if embeddings are too large
+    device = P.cuda_device
+    out_size = P.siam_feature_dim
+    if hasattr(net, 'feature_size'):
+        out_size = net.feature_size
+    if n * out_size * 4 > 2 ** 30:
+        # we will consume more than 1 GB here. use CPU
+        device = -1
+    return device, out_size
+
+
 # get all embeddings (feature vectors) of a dataset from a given net
 # the net is assumed to be in eval mode
-def get_embeddings(net, dataset):
+def get_embeddings(net, dataset, device, out_size):
     C, H, W = P.siam_input_size
     test_trans = transforms.Compose([])
     if not P.siam_test_pre_proc:
@@ -35,12 +49,7 @@ def get_embeddings(net, dataset):
         for j in range(n):
             embeddings[i + j] = out.data[j]
         return embeddings
-    device = P.cuda_device
-    if len(dataset) * P.siam_feature_dim * 4 > 2 ** 30:
-        # if the embeddings use more than 1GB of memory,
-        # get them onto CPU to be sure they fit in memory
-        device = -1
-    init = tensor(device, len(dataset), P.siam_feature_dim)
+    init = tensor(device, len(dataset), out_size)
     return fold_batches(batch, init, dataset, P.siam_test_batch_size)
 
 
@@ -48,8 +57,9 @@ def get_embeddings(net, dataset):
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
 def test_descriptor_net(net, testSet, testRefSet, normalized=True):
-    test_embeddings = get_embeddings(net, testSet)
-    ref_embeddings = get_embeddings(net, testRefSet)
+    d, o = get_device_and_size(net, max(len(testSet), len(testRefSet)))
+    test_embeddings = get_embeddings(net, testSet, d, o)
+    ref_embeddings = get_embeddings(net, testRefSet, d, o)
     if not normalized:
         test_embeddings = NormalizeL2Fun()(test_embeddings)
         ref_embeddings = NormalizeL2Fun()(ref_embeddings)
@@ -164,6 +174,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
     num_train = len(couples)
     num_pos = sum(1 for _, lab in couples if lab == 1)
     print('training set size:', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
+    net.train()
     for epoch in range(P.siam_train_epochs):
         random.shuffle(couples)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
@@ -301,6 +312,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     else:
         f = train_triplets
 
+    net.train()
     for epoch in range(P.siam_train_epochs):
         # for the 'hard' triplets, we need to know the embeddings of all
         # images at each epoch. so pre-calculate them here
@@ -308,7 +320,8 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             net.eval()
             # use the test-train set to obtain embeddings
             # (since it may be transformed differently than train set)
-            embeddings = get_embeddings(net, testset_tuple[1])
+            d, o = get_device_and_size(net, len(testset_tuple[1]))
+            embeddings = get_embeddings(net, testset_tuple[1], d, o)
             net.train()
 
         # for triplets, need to make sure the couples are evenly
