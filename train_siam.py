@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 
+import torchvision.transforms as transforms
 from torch.autograd import Variable
 
 from os import path
@@ -18,17 +19,18 @@ from test_params import P
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
 def test_descriptor_net(net, testSet, testRefSet, normalized=True):
     normalize_rows = NormalizeL2Fun()
+    trans = transforms.Compose([])
+    if not P.siam_test_pre_proc:
+        trans.transforms.append(P.siam_test_trans)
+    if P.test_norm_per_image:
+        trans.transforms.append(norm_image_t)
 
     def eval_batch_ref(last, i, batch):
         maxSim, maxLabel, sum_pos, sum_neg, out1, testLabels = last
         C, H, W = P.siam_input_size
         test_in2 = tensor(P.cuda_device, len(batch), C, H, W)
         for k, (refIm, _) in enumerate(batch):
-            if P.siam_test_pre_proc:
-                test_in2[k] = refIm
-            else:
-                test_in2[k] = P.siam_test_trans(refIm)
-            test_in2[k] = norm_image_t(test_in2[k])
+            test_in2[k] = trans(refIm)
 
         out2 = net(Variable(test_in2, volatile=True)).data
         if not normalized:
@@ -48,11 +50,7 @@ def test_descriptor_net(net, testSet, testRefSet, normalized=True):
         C, H, W = P.siam_input_size
         test_in1 = tensor(P.cuda_device, len(batch), C, H, W)
         for j, (testIm, _) in enumerate(batch):
-            if P.siam_test_pre_proc:
-                test_in1[j] = testIm
-            else:
-                test_in1[j] = P.siam_test_trans(testIm)
-            test_in1[j] = norm_image_t(test_in1[j])
+            test_in1[j] = trans(testIm)
 
         out1 = net(Variable(test_in1, volatile=True)).data
         if not normalized:
@@ -130,6 +128,10 @@ def siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, 
 
 
 def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+    trans = P.siam_train_trans
+    if P.siam_train_pre_proc:
+        trans = transforms.Compose([])
+
     def train_couples(last, i, batch):
         batchCount, score, running_loss = last
 
@@ -144,12 +146,8 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
             train_in2 = tensor(P.cuda_device, n, C, H, W)
             train_labels = tensor(P.cuda_device, n)
             for j, ((im1, im2), lab) in enumerate(batch):
-                if P.siam_train_pre_proc:
-                    train_in1[j] = im1
-                    train_in2[j] = im2
-                else:
-                    train_in1[j] = trans(im1)
-                    train_in2[j] = trans(im2)
+                train_in1[j] = trans(im1)
+                train_in2[j] = trans(im2)
                 train_labels[j] = lab
             out1, out2 = net(Variable(train_in1), Variable(train_in2))
             loss = criterion(out1, out2, Variable(train_labels))
@@ -186,18 +184,21 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             * optimizer
     """
     C, H, W = P.siam_input_size
-    trans = P.siam_train_trans
+    train_trans = P.siam_train_trans
+    if P.siam_train_pre_proc:
+        train_trans = transforms.Compose([])
+    test_trans = transforms.Compose([])
+    if not P.siam_test_pre_proc:
+        test_trans.transforms.append(P.siam_test_trans)
+    if P.test_norm_per_image:
+        test_trans.transforms.append(norm_image_t)
 
     def embeddings_batch(last, i, batch):
         embeddings = last
         n = len(batch)
         test_in = tensor(P.cuda_device, n, C, H, W)
         for j in range(n):
-            if P.siam_test_pre_proc:
-                test_in[j] = batch[j][0]
-            else:
-                test_in[j] = P.siam_test_trans(batch[j][0])
-            test_in[j] = norm_image_t(test_in[j])
+            test_in[j] = test_trans(batch[j][0])
 
         out = net(Variable(test_in, volatile=True))
         for j in range(n):
@@ -218,14 +219,9 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 k = random.randrange(len(trainSet))
                 while (trainSet[k][1] == lab):
                     k = random.randrange(len(trainSet))
-                if P.siam_train_pre_proc:
-                    train_in1[j] = x1
-                    train_in2[j] = x2
-                    train_in3[j] = trainSet[k][0]
-                else:
-                    train_in1[j] = trans(x1)
-                    train_in2[j] = trans(x2)
-                    train_in3[j] = trans(trainSet[k][0])
+                train_in1[j] = train_trans(x1)
+                train_in2[j] = train_trans(x2)
+                train_in3[j] = train_trans(trainSet[k][0])
             out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
             loss = criterion(out1, out2, out3)
             loss.backward()
@@ -279,14 +275,9 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 else:
                     k3 = min(negatives, key=lambda x: x[1])[0]
                     x3 = trainSet[k3][0]
-                if P.siam_train_pre_proc:
-                    train_in1[j] = x1
-                    train_in2[j] = x2
-                    train_in3[j] = x3
-                else:
-                    train_in1[j] = trans(x1)
-                    train_in2[j] = trans(x2)
-                    train_in3[j] = trans(x3)
+                train_in1[j] = train_trans(x1)
+                train_in2[j] = train_trans(x2)
+                train_in3[j] = train_trans(x3)
             out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
             loss = criterion(out1, out2, out3)
             loss.backward()
@@ -325,15 +316,15 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     couples = get_pos_couples(trainSet)
     num_pos = sum(len(couples[l]) for l in couples)
     print('#pos:{0}'.format(num_pos))
-    if P.siam_train_mode == 'triplets':
-        f = train_triplets
-    else:
+    if P.siam_choice_mode == 'hard':
         f = train_triplets_hard
+    else:
+        f = train_triplets
 
     for epoch in range(P.siam_train_epochs):
         # for the 'hard' triplets, we need to know the embeddings of all
         # images at each epoch. so pre-calculate them here
-        if P.siam_train_mode == 'triplets_hard':
+        if P.siam_choice_mode == 'hard':
             init = tensor(P.cuda_device, len(trainSet), P.siam_feature_dim)
             net.eval()
             # use the test-train set to obtain embeddings

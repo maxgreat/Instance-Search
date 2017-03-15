@@ -12,6 +12,76 @@ from dataset import ReadImages
 from test_params import P
 
 
+def get_class_net(labels):
+    if P.finetuning and P.classif_train:
+        return TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
+    elif P.finetuning:
+        feature_avg_size = None
+        if P.feature_net_average:
+            feature_avg_size = P.siam_feature_out_size2d
+        return FeatureNet(P.cnn_model(pretrained=True), feature_avg_size)
+    else:
+        return P.cnn_model()
+
+
+def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
+    if not P.classif_train and not P.classif_test_upfront:
+        return None
+
+    class_net = get_class_net(labels)
+    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
+
+    if P.cuda_device >= 0:
+        class_net.cuda()
+    else:
+        class_net.cpu()
+    class_net.train()
+    optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
+    criterion = nn.CrossEntropyLoss()
+    testset_tuple = (testTrainSetClassif, testSetClassif)
+    if P.classif_test_upfront:
+        print('Upfront testing of classification model')
+        score = test_print_classif(class_net, testset_tuple, labels)
+    else:
+        score = 0
+    if P.classif_train:
+        print('Starting classification training')
+        # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
+        train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
+        print('Finished classification training')
+    return class_net
+
+
+def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
+    net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.siam_feature_out_size2d)
+    if P.cuda_device >= 0:
+        net.cuda()
+    else:
+        net.cpu()
+    net.train()
+
+    optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
+    # criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
+    if P.siam_train_mode == 'couples':
+        criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
+    else:
+        criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
+    testset_tuple = (testSetSiam, testTrainSetSiam)
+    if P.siam_test_upfront:
+        print('Upfront testing of Siamese net')
+        score = test_print_siamese(net, testset_tuple, P.siam_test_batch_size)
+    else:
+        score = 0
+    if P.siam_train_mode == 'couples':
+        f = train_siam_couples
+    else:
+        f = train_siam_triplets
+    if P.siam_train:
+        print('Starting descriptor training')
+        f(net, trainSetSiam, testset_tuple, criterion, optimizer, bestScore=score)
+        print('Finished descriptor training')
+
+
 def main():
 
     def match(x):
@@ -52,56 +122,10 @@ def main():
     test_filters = [lambda im, lab: lab in labels for _ in test_trans]
     testSetClassif, testSetSiam = trans_dataset(testSetFull, test_pre_procs, test_trans, test_filters)
 
-    print('Starting classification training')
-
-    if P.finetuning:
-        class_net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
-    else:
-        class_net = P.cnn_model()
-
-    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt'))
-
-    if P.cuda_device >= 0:
-        class_net.cuda()
-    else:
-        class_net.cpu()
-    class_net.train()
-    optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
-    criterion = nn.CrossEntropyLoss()
-    testset_tuple = (testTrainSetClassif, testSetClassif)
-    score = test_print_classif(class_net, testset_tuple, labels)
-    # score = 0
-    # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-    train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
-
-    print('Finished classification training')
-    print('Starting descriptor training')
-
-    # for ResNet152, spatial feature dimensions are 8x8 (for 227x227 input)
-    # for AlexNet, it's 6x6 (for 227x227 input)
-    net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.siam_feature_out_size2d)
-    if P.cuda_device >= 0:
-        net.cuda()
-    else:
-        net.cpu()
-    net.train()
-
-    optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
-    # criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
-    if P.siam_train_mode == 'couples':
-        criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
-    else:
-        criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
-    testset_tuple = (testSetSiam, testTrainSetSiam)
-    score = test_print_siamese(net, testset_tuple, P.siam_test_batch_size)
-    # score = 0
-    if P.siam_train_mode == 'couples':
-        f = train_siam_couples
-    else:
-        f = train_siam_triplets
-    f(net, trainSetSiam, testset_tuple, criterion, optimizer, bestScore=score)
-
-    print('Finished descriptor training')
+    class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
+    if not P.classif_train:
+        class_net = get_class_net(labels)
+    siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam)
 
 
 if __name__ == '__main__':

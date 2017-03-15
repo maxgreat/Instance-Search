@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 
+import torchvision.transforms as transforms
 from torch.autograd import Variable
 
 from os import path
@@ -14,16 +15,18 @@ def test_classif_net(net, testSet, labels, batchSize):
         Test the network accuracy on a testSet
         Return the number of succes and the number of evaluations done
     """
+    trans = transforms.Compose([])
+    if not P.classif_test_pre_proc:
+        trans.transforms.append(P.classif_test_trans)
+    if P.test_norm_per_image:
+        trans.transforms.append(norm_image_t)
+
     def eval_batch_test(last, i, batch):
         correct, total = last
         C, H, W = P.classif_input_size
         test_in = tensor(P.cuda_device, len(batch), C, H, W)
         for j, (testIm, _) in enumerate(batch):
-            if P.classif_test_pre_proc:
-                test_in[j] = testIm
-            else:
-                test_in[j] = P.classif_test_trans(testIm)
-            test_in[j] = norm_image_t(test_in[j])
+            test_in[j] = trans(testIm)
 
         out = net(Variable(test_in, volatile=True)).data
         _, predicted = torch.max(out, 1)

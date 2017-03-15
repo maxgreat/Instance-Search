@@ -21,6 +21,30 @@ def extract_layers(net):
     return features, feature_reduc, classifier
 
 
+class FeatureNet(nn.Module):
+    """
+        A simple network consisting only of the features extracted
+        from an underlying CNN, which can be averaged spatially and
+        are then returned as a flat vector
+    """
+    def __init__(self, net, average_feature_size=None):
+        super(FeatureNet, self).__init__()
+        self.features, _, _ = extract_layers(net)
+        self.classifier = None
+        self.feature_reduc = None
+        if average_feature_size:
+            self.feature_reduc = nn.AvgPool2d(average_feature_size)
+        self.norm = NormalizeL2()
+
+    def forward(self, x):
+        x = self.features(x)
+        if self.feature_reduc:
+            x = self.feature_reduc(x)
+        x = x.view(x.size(0), -1)
+        x = self.norm(x)
+        return x
+
+
 class TuneClassif(nn.Module):
     """
         Image classification network based on a pretrained network
@@ -33,12 +57,9 @@ class TuneClassif(nn.Module):
 
     def __init__(self, net, num_classes, untrained_blocks=-1):
         super(TuneClassif, self).__init__()
-        features, feature_reduc, classifier = extract_layers(net)
+        self.features, self.feature_reduc, self.classifier = extract_layers(net)
         if untrained_blocks < 0:
             untrained_blocks = sum(1 for _ in features) + sum(1 for _ in classifier)
-        self.features = features
-        self.feature_reduc = feature_reduc
-        self.classifier = classifier
         # make sure we never retrain the first few layers
         # this is usually not needed
         seqs = [self.features, self.feature_reduc, self.classifier]
@@ -72,7 +93,7 @@ class Siamese1(nn.Module):
     """
     def __init__(self, net, num_classes=100, feature_dim=100, feature_size2d=(6, 6)):
         super(Siamese1, self).__init__()
-        self.features = net.features
+        self.features, _, _ = extract_layers(net)
         spatial_factor = 1
         self.spatial_feature_reduc = nn.Sequential(
             nn.AvgPool2d(spatial_factor)

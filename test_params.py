@@ -21,7 +21,8 @@ class TestParams(object):
         self.finetuning = True
         self.cnn_model = models.resnet152
         self.save_dir = 'data'
-        self.cuda_device = 0
+        self.cuda_device = 1
+        self.test_norm_per_image = False
 
         # in ResNet, before first layer, there are 2 modules with parameters.
         # then number of blocks per layers:
@@ -34,11 +35,15 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
+        self.classif_test_upfront = False
+        self.classif_train = False
         self.classif_input_size = (3, 227, 227)
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
-        # normalization done per image during test
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
+        if not self.test_norm_per_image:
+            # normalization not done per image during test
+            self.classif_test_trans.transforms.append(transforms.Normalize(m, s))
 
         # Classification net training params
         self.classif_train_epochs = 0
@@ -59,22 +64,33 @@ class TestParams(object):
         self.classif_test_int = 100
 
         # Siamese net general and testing params
+        self.feature_net_average = False
+        self.siam_test_upfront = True
+        self.siam_train = False
         self.siam_input_size = (3, 227, 227)
         self.siam_feature_out_size2d = (8, 8)
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
-        self.siam_test_batch_size = 32
+        self.siam_test_batch_size = 16
         self.siam_test_pre_proc = True
-        # normalization done per image during test
         self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
+        if not self.test_norm_per_image:
+            # normalization not done per image during test
+            self.siam_test_trans.transforms.append(transforms.Normalize(m, s))
 
         # Siamese net training params
-        # for train mode: 'couples': using cosine loss (and all couples)
-        # 'triplets_rand': using triplet loss and triplets chosen at random
-        # 'triplets_hard': using triplet loss and semi-hard triplets
+        # for train mode: 'couples': using cosine loss
+        # 'triplets': using triplet loss
+        # choice mode: for 'couples':
+        # 'rand': using random couples
+        # 'hard': using all positives and hardest negative couples
+        # for 'triplets':
+        # 'rand': using random negatives for all positives
+        # 'hard':semi-hard triplets
         # (see FaceNet paper by Schroff et al)
-        self.siam_train_mode = 'triplets_hard'
+        self.siam_train_mode = 'triplets'
+        self.siam_choice_mode = 'hard'
         self.siam_triplet_margin = 0.2
         # for triplet_hard mode, number of epochs after which we
         # take only the hardest examples:
@@ -83,7 +99,7 @@ class TestParams(object):
         self.siam_train_pre_proc = False
         self.siam_couples_p = 0.9
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 32
+        self.siam_train_micro_batch = 16
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
