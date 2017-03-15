@@ -50,7 +50,7 @@ def pad_square(img):
 # randomly rotate, shift and scale vertically and horizontally a PIL image with given angle in radians and shifting/scaling ratios
 # inspired by http://stackoverflow.com/questions/7501009/affine-transform-in-pil-python
 def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
-    def trans(im):
+    def rand_affine(im):
         angle = random.uniform(-rotation, rotation)
         x, y = im.size[0] / 2, im.size[1] / 2
         nx = x + random.uniform(-h_range, h_range) * im.size[0]
@@ -63,7 +63,7 @@ def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
         d, e = -sin / sy, cos / sy
         f = y - nx * d - ny * e
         return im.transform(im.size, Image.AFFINE, (a, b, c, d, e, f), resample=Image.NEAREST)
-    return trans
+    return rand_affine
 
 
 # ------------ Generators for couples/triplets ------------------

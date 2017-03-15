@@ -45,7 +45,7 @@ def test_print_classif(net, testset_tuple, labels, bestScore=0, epoch=0):
         bestScore = c
         prefix = 'CLASSIF, EPOCH:{0}, SCORE:{1}'.format(epoch, c)
         P.save_uuid(prefix)
-        torch.save(net, path.join(P.save_dir, P.uuid.hex + "_best_classif.ckpt"))
+        torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_classif.ckpt"))
     print("TEST - Correct : ", c, "/", t, '->', float(c) / t)
 
     c, t = test_classif_net(net, testTrainSet, labels, P.classif_test_batch_size)

@@ -3,7 +3,7 @@
 import tempfile
 import torchvision.transforms as transforms
 import torchvision.models as models
-from uuid import uuid1
+from datetime import datetime
 from os import rename, path
 from utils import *
 
@@ -11,8 +11,8 @@ from utils import *
 class TestParams(object):
 
     def __init__(self):
-        # UUID for these parameters (at random)
-        self.uuid = uuid1()
+        # UUID for these parameters (current time)
+        self.uuid = datetime.now()
 
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_227sq'
@@ -109,6 +109,9 @@ class TestParams(object):
         self.siam_loss_int = 10
         self.siam_test_int = 50
 
+    def unique_str(self):
+        return self.uuid.strftime('%Y%m%d-%H%M%S-%f')
+
     def save(self, f, prefix):
         f.write('{0}\n'.format(prefix))
         for name, value in sorted(vars(self).items()):
@@ -125,7 +128,7 @@ class TestParams(object):
         f = tempfile.NamedTemporaryFile(dir=self.save_dir, delete=False)
         self.save(f, prefix)
         # the following will not work on Windows (would need to add a remove first)
-        rename(f.name, path.join(self.save_dir, self.uuid.hex + '.txt'))
+        rename(f.name, path.join(self.save_dir, self.unique_str() + '.params'))
 
 
 # global test params:

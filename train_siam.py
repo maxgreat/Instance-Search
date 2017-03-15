@@ -97,7 +97,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
         bestScore = correct
         prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
         P.save_uuid(prefix)
-        torch.save(net, path.join(P.save_dir, P.uuid.hex + "_best_siam.ckpt"))
+        torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_siam.ckpt"))
     print_stats('TEST - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(testSet))
     torch.save(net, path.join(P.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
