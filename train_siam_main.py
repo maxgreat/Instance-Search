@@ -16,7 +16,7 @@ def get_class_net(labels):
     if P.finetuning and P.classif_train:
         net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
     elif P.finetuning:
-        net = FeatureNet(P.cnn_model(pretrained=True), P.siam_feature_out_size2d, P.feature_net_average, P.feature_net_classify)
+        net = FeatureNet(P.cnn_model(pretrained=True), P.feature_size2d, P.feature_net_average, P.feature_net_classify)
     else:
         net = P.cnn_model()
     if P.cuda_device >= 0:
@@ -50,7 +50,7 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
 
 
 def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
-    net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.siam_feature_out_size2d)
+    net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.feature_size2d)
     if P.cuda_device >= 0:
         net.cuda()
     else:
@@ -79,14 +79,11 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
 
 
 def main():
-
-    def match(x):
-        return x.split('/')[-1].split('-')[0]
     # training and test sets (scaled to 300 on the small side)
     trainSetFull = ReadImages.readImageswithPattern(
-        P.dataset_full, match)
+        P.dataset_full, P.dataset_match_img)
     testSetFull = ReadImages.readImageswithPattern(
-        P.dataset_full + '/test', match)
+        P.dataset_full + '/test', P.dataset_match_img)
 
     # define the labels list
     listLabel = [t[1] for t in trainSetFull if 'wall' not in t[1]]

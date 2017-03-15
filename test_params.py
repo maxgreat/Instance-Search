@@ -11,15 +11,25 @@ from utils import *
 class TestParams(object):
 
     def __init__(self):
+
+        def match_fou_clean2(x):
+            s = x.split('/')[-1].split('_')
+            return s[0] + s[1]
+
+        def match_video(x):
+            return x.split('/')[-1].split('-')[0]
+
         # UUID for these parameters (current time)
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/CLICIDE_227sq'
+        self.dataset_full = 'data/pre_proc/fourviere_clean2_227sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.mean_std_file = 'data/CLICIDE_227sq_train_ms.txt' if self.dataset_name == 'CLICIDE' else 'data/fourviere_227sq_train_ms.txt'
+        self.dataset_match_img = match_fou_clean2
         self.finetuning = True
         self.cnn_model = models.resnet152
+        self.feature_size2d = (8, 8)
         self.save_dir = 'data'
         self.cuda_device = 1
         self.test_norm_per_image = False
@@ -65,7 +75,7 @@ class TestParams(object):
 
         # if there is no finetuned classification net, settings for
         # underlying feature net
-        self.feature_net_average = True
+        self.feature_net_average = False
         self.feature_net_classify = False
 
         # Siamese net general and testing params
@@ -73,7 +83,6 @@ class TestParams(object):
         self.siam_test_class_upfront = True
         self.siam_train = False
         self.siam_input_size = (3, 227, 227)
-        self.siam_feature_out_size2d = (8, 8)
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
@@ -124,7 +133,7 @@ class TestParams(object):
                 continue
             if name in ('classif_test_trans', 'classif_train_trans', 'siam_test_trans', 'siam_train_trans'):
                 value = trans_str(value)
-            elif name == 'cnn_model':
+            elif name in ('cnn_model', 'dataset_match_img'):
                 value = fun_str(value)
             f.write('{0}:{1}\n'.format(name, value))
         f.close()
