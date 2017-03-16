@@ -23,13 +23,13 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
+        self.dataset_full = 'data/pre_proc/fourviere_clean2_224sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
-        self.mean_std_file = 'data/CLICIDE_224sq_train_ms.txt' if self.dataset_name == 'CLICIDE' else 'data/fourviere_224sq_train_ms.txt'
-        self.dataset_match_img = match_video
+        self.mean_std_file = 'data/fourviere_224sq_train_ms.txt' if self.dataset_name == 'fourviere' else 'data/CLICIDE_224sq_train_ms.txt'
+        self.dataset_match_img = match_fou_clean2 if self.dataset_name == 'fourviere' else match_video
         self.finetuning = True
-        self.cnn_model = models.alexnet
-        self.feature_size2d = (6, 6)
+        self.cnn_model = models.resnet152
+        self.feature_size2d = (7, 7)
         self.image_input_size = (3, 224, 224)
         self.save_dir = 'data'
         self.cuda_device = 1
@@ -42,12 +42,13 @@ class TestParams(object):
         # finally, a single FC layer is used as classifier
         # in AlexNet, there are 5 convolutional layers with parameters
         # and 3 FC layers in the classifier
-        self.untrained_blocks = 4  # 2 + 3 + 8 + 36
+        self.untrained_blocks = (2 + 3 + 8 + 36) if self.cnn_model is models.resnet152 else 4
 
         # read mean and standard of dataset here to define transforms already
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
+        self.classif_preload_net = ''
         self.classif_test_upfront = True
         self.classif_train = True
         self.classif_test_batch_size = 128
@@ -73,16 +74,16 @@ class TestParams(object):
         self.classif_optim = 'SGD'
         self.classif_annealing = {30: 0.1}
         self.classif_loss_int = 10
-        self.classif_test_int = 100
+        self.classif_test_int = 0
 
-        # if there is no finetuned classification net, settings for
-        # underlying feature net
+        # settings for feature net constructed from classification net
         self.feature_net_average = False
         self.feature_net_classify = False
+        self.feature_net_upfront = True
 
         # Siamese net general and testing params
+        self.siam_preload_net = ''
         self.siam_test_upfront = False
-        self.siam_test_class_upfront = True
         self.siam_train = False
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6

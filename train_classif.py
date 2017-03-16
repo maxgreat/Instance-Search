@@ -100,7 +100,8 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             running_loss = 0.0
 
         test_int = P.classif_test_int
-        if batchCount % test_int == test_int - 1:
+        if ((test_int > 0 and batchCount % test_int == test_int - 1) or
+                (i + batchSize >= len(trainSet) and test_int <= 0)):
             score = test_print_classif(net, testset_tuple, labels, score, epoch + 1)
         return batchCount + 1, score, running_loss
 

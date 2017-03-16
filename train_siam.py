@@ -121,7 +121,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     return bestScore
 
 
-def siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score):
+def siam_train_stats(net, testset_tuple, epoch, batchCount, last_batch, loss, running_loss, score):
     disp_int = P.siam_loss_int
     test_int = P.siam_test_int
     running_loss += loss
@@ -129,7 +129,8 @@ def siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, 
         print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, running_loss / disp_int))
         running_loss = 0.0
     # test model every x mini-batches
-    if batchCount % test_int == test_int - 1:
+    if ((test_int > 0 and batchCount % test_int == test_int - 1) or
+            (last_batch and test_int <= 0)):
         score = test_print_siamese(net, testset_tuple, score, epoch + 1)
     return running_loss, score
 
@@ -165,7 +166,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         optimizer.zero_grad()
         loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= num_train, loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
     def label_f(i1, l1, i2, l2):
@@ -221,7 +222,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         optimizer.zero_grad()
         loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= len(couples), loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
     def train_triplets_hard(last, i, batch):
@@ -277,7 +278,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         optimizer.zero_grad()
         loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, loss, running_loss, score)
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= len(couples), loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
     def shuffle_couples(couples):
