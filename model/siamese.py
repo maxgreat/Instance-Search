@@ -20,6 +20,8 @@ def get_feature_size(seq, factor=1, default=-1):
 
 
 def extract_layers(net):
+    if hasattr(net, 'features') and hasattr(net, 'feature_reduc') and hasattr(net, 'classifier'):
+        return net.features, net.feature_reduc, net.classifier
     if isinstance(net, models.ResNet):
         features = [net.conv1, net.bn1, net.relu, net.maxpool]
         features.extend(net.layer1)
@@ -41,14 +43,14 @@ class FeatureNet(nn.Module):
         from an underlying CNN, which can be averaged spatially and
         are then returned as a flat vector
     """
-    def __init__(self, net, feature_size2d, average_feature_size=False, classify=False):
+    def __init__(self, net, feature_size2d, average_features=False, classify=False):
         super(FeatureNet, self).__init__()
         self.features, self.feature_reduc, self.classifier = extract_layers(net)
         if not classify:
             self.feature_reduc, self.classifier = None, None
             factor = feature_size2d[0] * feature_size2d[1]
             self.feature_size = get_feature_size(self.features, factor)
-            if average_feature_size:
+            if average_features:
                 self.feature_reduc = nn.AvgPool2d(feature_size2d)
                 self.feature_size /= (feature_size2d[0] * feature_size2d[1])
         else:
