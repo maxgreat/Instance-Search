@@ -13,10 +13,10 @@ from test_params import P
 
 
 def get_class_net(labels):
-    if P.finetuning and P.classif_train:
-        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
+    if P.classif_preload_net:
+        net = torch.load(P.classif_preload_net)
     elif P.finetuning:
-        net = FeatureNet(P.cnn_model(pretrained=True), P.feature_size2d, P.feature_net_average, P.feature_net_classify)
+        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
     else:
         net = P.cnn_model()
     if P.cuda_device >= 0:
@@ -27,9 +27,6 @@ def get_class_net(labels):
 
 
 def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
-    if not P.classif_train and not P.classif_test_upfront:
-        return None
-
     class_net = get_class_net(labels)
     # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt')).cuda()
 
@@ -50,7 +47,10 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
 
 
 def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
-    net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.feature_size2d)
+    if P.siam_preload_net:
+        net = torch.load(P.siam_preload_net)
+    else:
+        net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.feature_size2d)
     if P.cuda_device >= 0:
         net.cuda()
     else:
@@ -116,12 +116,11 @@ def main():
     testSetClassif, testSetSiam = trans_dataset(testSetFull, test_pre_procs, test_trans, test_filters)
 
     class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
-    if not P.classif_train:
-        class_net = get_class_net(labels)
-    if P.siam_test_class_upfront:
+    feature_net = FeatureNet(class_net, P.feature_size2d, P.feature_net_average, P.feature_net_classify)
+    if P.feature_net_upfront:
         print('Upfront testing of class/feature net as global descriptor')
-        test_print_siamese(class_net, (testSetSiam, testTrainSetSiam))
-    siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam)
+        test_print_siamese(feature_net, (testSetSiam, testTrainSetSiam))
+    siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam)
 
 
 if __name__ == '__main__':
