@@ -96,7 +96,7 @@ class TuneClassif(nn.Module):
                 p.requires_grad = False
 
         for name, module in self.classifier._modules.items():
-            if module is classifier[len(classifier._modules) - 1]:
+            if module is self.classifier[len(self.classifier._modules) - 1]:
                 self.classifier._modules[name] = nn.Linear(module.in_features, num_classes)
         self.feature_size = num_classes
 
