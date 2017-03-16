@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 
+import torch.optim as optim
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 
@@ -23,7 +24,7 @@ def test_classif_net(net, testSet, labels, batchSize):
 
     def eval_batch_test(last, i, batch):
         correct, total = last
-        C, H, W = P.classif_input_size
+        C, H, W = P.image_input_size
         test_in = tensor(P.cuda_device, len(batch), C, H, W)
         for j, (testIm, _) in enumerate(batch):
             test_in[j] = trans(testIm)
@@ -69,7 +70,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         batchCount, score, running_loss = last
         batchSize = len(batch)
         # get the inputs
-        C, H, W = P.classif_input_size
+        C, H, W = P.image_input_size
         train_in = tensor(P.cuda_device, batchSize, C, H, W)
         for j in range(batchSize):
             if P.classif_train_pre_proc:

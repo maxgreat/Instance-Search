@@ -31,7 +31,7 @@ def get_device_and_size(net, n):
 # get all embeddings (feature vectors) of a dataset from a given net
 # the net is assumed to be in eval mode
 def get_embeddings(net, dataset, device, out_size):
-    C, H, W = P.siam_input_size
+    C, H, W = P.image_input_size
     test_trans = transforms.Compose([])
     if not P.siam_test_pre_proc:
         test_trans.transforms.append(P.siam_test_trans)
@@ -191,7 +191,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             * loss function (criterion)
             * optimizer
     """
-    C, H, W = P.siam_input_size
+    C, H, W = P.image_input_size
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])

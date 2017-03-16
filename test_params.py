@@ -23,13 +23,14 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/fourviere_clean2_227sq'
+        self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
-        self.mean_std_file = 'data/CLICIDE_227sq_train_ms.txt' if self.dataset_name == 'CLICIDE' else 'data/fourviere_227sq_train_ms.txt'
-        self.dataset_match_img = match_fou_clean2
+        self.mean_std_file = 'data/CLICIDE_224sq_train_ms.txt' if self.dataset_name == 'CLICIDE' else 'data/fourviere_224sq_train_ms.txt'
+        self.dataset_match_img = match_video
         self.finetuning = True
-        self.cnn_model = models.resnet152
-        self.feature_size2d = (8, 8)
+        self.cnn_model = models.alexnet
+        self.feature_size2d = (6, 6)
+        self.image_input_size = (3, 224, 224)
         self.save_dir = 'data'
         self.cuda_device = 1
         self.test_norm_per_image = False
@@ -39,15 +40,16 @@ class TestParams(object):
         # ResNet152 - layer 1: 3, layer 2: 8, layer 3: 36, layer 4: 3
         # ResNet50 - layer 1: 3, layer 2: 4, layer 3: 6, layer 4: 3
         # finally, a single FC layer is used as classifier
-        self.untrained_blocks = 2 + 3 + 8 + 36
+        # in AlexNet, there are 5 convolutional layers with parameters
+        # and 3 FC layers in the classifier
+        self.untrained_blocks = 4  # 2 + 3 + 8 + 36
 
         # read mean and standard of dataset here to define transforms already
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_test_upfront = False
-        self.classif_train = False
-        self.classif_input_size = (3, 227, 227)
+        self.classif_test_upfront = True
+        self.classif_train = True
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
@@ -56,7 +58,7 @@ class TestParams(object):
             self.classif_test_trans.transforms.append(transforms.Normalize(m, s))
 
         # Classification net training params
-        self.classif_train_epochs = 0
+        self.classif_train_epochs = 50
         self.classif_train_batch_size = 32
         self.classif_train_pre_proc = False
         self.classif_train_aug_rot = r = 45
@@ -65,7 +67,7 @@ class TestParams(object):
         self.classif_train_aug_hsrange = hsr = 0.2
         self.classif_train_aug_vsrange = vsr = 0.2
         self.classif_train_trans = transforms.Compose([random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
-        self.classif_lr = 1e-4
+        self.classif_lr = 1e-3
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
         self.classif_optim = 'SGD'
@@ -79,10 +81,9 @@ class TestParams(object):
         self.feature_net_classify = False
 
         # Siamese net general and testing params
-        self.siam_test_upfront = True
+        self.siam_test_upfront = False
         self.siam_test_class_upfront = True
         self.siam_train = False
-        self.siam_input_size = (3, 227, 227)
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
