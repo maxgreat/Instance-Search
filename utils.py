@@ -80,28 +80,18 @@ def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
 
 
 # ------------ Generators for couples/triplets ------------------
-# get couples of images along with their label
-# allow given percentage of negative examples as compared to positive
-def get_couples(dataset, neg_percentage, label_f):
-    num_pos = 0
-    couples = []
-    cwr = itertools.combinations_with_replacement
-    # get all positive couples
-    for (i1, (x1, l1)), (i2, (x2, l2)) in cwr(enumerate(dataset), 2):
-        if l1 == l2:
-            couples.append(((x1, x2), label_f(i1, l1, i2, l2)))
-            num_pos += 1
-    if neg_percentage <= 0:
-        return couples
-    num_neg = 0
-    # get negative couples
-    for (x1, l1), (x2, l2) in itertools.combinations(dataset, 2):
-        if l1 != l2:
-            couples.append(((x1, x2), label_f(i1, l1, i2, l2)))
-            num_neg += 1
-            if float(num_neg) / (num_neg + num_pos) >= neg_percentage:
-                break
-    return couples
+# get couples of images as a dict with images as keys and all other
+# images of same label as values
+def get_pos_couples_im(dataset):
+    couples = {}
+    for x1, l1 in dataset:
+        for x2, l2 in dataset:
+            if l1 != l2 or x1 == x2:
+                continue
+            if x1 in couples:
+                couples[x1].append(x2)
+            else:
+                couples[x1] = [x2]
 
 
 # get the positive couples of a dataset as a dict with labels as keys

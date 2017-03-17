@@ -49,8 +49,8 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_preload_net = 'data/finetune_classif/cli_best_alexnet_classif_finetuned.ckpt'
-        self.classif_test_upfront = True
+        self.classif_preload_net = ''
+        self.classif_test_upfront = False
         self.classif_train = False
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
@@ -80,16 +80,16 @@ class TestParams(object):
         # settings for feature net constructed from classification net
         self.feature_net_average = False
         self.feature_net_classify = False
-        self.feature_net_upfront = True
+        self.feature_net_upfront = False
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = False
-        self.siam_train = False
+        self.siam_test_upfront = True
+        self.siam_train = True
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
-        self.siam_test_batch_size = 16
+        self.siam_test_batch_size = 32
         self.siam_test_pre_proc = True
         self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
@@ -104,19 +104,19 @@ class TestParams(object):
         # 'hard': using all positives and hardest negative couples
         # for 'triplets':
         # 'rand': using random negatives for all positives
-        # 'hard':semi-hard triplets
+        # 'semi-hard':semi-hard triplets
         # (see FaceNet paper by Schroff et al)
-        self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'hard'
+        self.siam_train_mode = 'couples'
+        self.siam_choice_mode = 'rand'
         self.siam_triplet_margin = 0.2
-        # for triplet_hard mode, number of epochs after which we
+        # for triplet:semi-hard mode, number of epochs after which we
         # take only the hardest examples:
         self.siam_triplets_switch = 10
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
         self.siam_couples_p = 0.9
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 16
+        self.siam_train_micro_batch = 32
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
