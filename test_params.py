@@ -23,15 +23,16 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/fourviere_clean2_224sq'
+        self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.mean_std_file = 'data/fourviere_224sq_train_ms.txt' if self.dataset_name == 'fourviere' else 'data/CLICIDE_224sq_train_ms.txt'
         self.dataset_match_img = match_fou_clean2 if self.dataset_name == 'fourviere' else match_video
         self.finetuning = True
-        self.cnn_model = models.resnet152
-        self.feature_size2d = (7, 7)
+        self.cnn_model = models.alexnet
+        self.feature_size2d = (6, 6)
         self.image_input_size = (3, 224, 224)
         self.save_dir = 'data'
+        self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
         self.cuda_device = 1
         self.test_norm_per_image = False
 
@@ -48,9 +49,9 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_preload_net = ''
+        self.classif_preload_net = 'data/finetune_classif/cli_best_alexnet_classif_finetuned.ckpt'
         self.classif_test_upfront = True
-        self.classif_train = True
+        self.classif_train = False
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
@@ -68,7 +69,7 @@ class TestParams(object):
         self.classif_train_aug_hsrange = hsr = 0.2
         self.classif_train_aug_vsrange = vsr = 0.2
         self.classif_train_trans = transforms.Compose([random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
-        self.classif_lr = 1e-3
+        self.classif_lr = 1e-2
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
         self.classif_optim = 'SGD'

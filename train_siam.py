@@ -92,7 +92,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
         s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\n'.format(c, t, float(c) / t)
         s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
-        print(prefix + s1 + s2)
+        log(P.log_file, prefix + s1 + s2)
 
     testSet, testRefSet = testset_tuple
     net.eval()
@@ -126,7 +126,7 @@ def siam_train_stats(net, testset_tuple, epoch, batchCount, last_batch, loss, ru
     test_int = P.siam_test_int
     running_loss += loss
     if batchCount % disp_int == disp_int - 1:
-        print('[%d, %5d] loss: %.3f' % (epoch + 1, batchCount + 1, running_loss / disp_int))
+        log(P.log_file, '[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
         running_loss = 0.0
     # test model every x mini-batches
     if ((test_int > 0 and batchCount % test_int == test_int - 1) or
@@ -174,7 +174,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
     couples = get_couples(trainSet, P.siam_couples_p, label_f)
     num_train = len(couples)
     num_pos = sum(1 for _, lab in couples if lab == 1)
-    print('training set size:', num_train, '#pos:', num_pos, '#neg:', num_train - num_pos)
+    log(P.log_file, 'training set size:{0}, #pos:{1}, #neg{2}'.format(num_train, num_pos, num_train - num_pos))
     net.train()
     for epoch in range(P.siam_train_epochs):
         random.shuffle(couples)
@@ -259,7 +259,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 if len(negatives) <= 0:
                     p = 'cant find semi-hard neg for'
                     s = 'falling back to random neg'
-                    print('{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
+                    log(P.log_file, '{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
                     k = random.randrange(len(trainSet))
                     while (trainSet[k][1] == lab):
                         k = random.randrange(len(trainSet))
@@ -307,7 +307,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     # then choose negative for each couple specifically
     couples = get_pos_couples(trainSet)
     num_pos = sum(len(couples[l]) for l in couples)
-    print('#pos:{0}'.format(num_pos))
+    log(P.log_file, '#pos:{0}'.format(num_pos))
     if P.siam_choice_mode == 'hard':
         f = train_triplets_hard
     else:

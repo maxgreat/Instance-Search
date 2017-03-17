@@ -1,5 +1,8 @@
 # -*- encoding: utf-8 -*-
 
+from __future__ import print_function
+
+import sys
 import torch
 import torchvision.transforms as transforms
 import types
@@ -16,6 +19,16 @@ def readMeanStd(fname):
         mean = map(float, f.readline().split(' '))
         std = map(float, f.readline().split(' '))
     return mean, std
+
+
+def log_detail(fname, p_file, *args):
+    print(*args, file=p_file)
+    if fname:
+        with open(fname, 'a') as f:
+            print(*args, file=f)
+
+def log(fname, *args):
+    log_detail(fname, sys.stdout, *args)
 
 
 # ----------------------- String utils -------------------------
