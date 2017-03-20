@@ -1,5 +1,8 @@
 # -*- encoding: utf-8 -*-
 
+from __future__ import print_function
+
+import sys
 import tempfile
 import torchvision.transforms as transforms
 import torchvision.models as models
@@ -35,6 +38,9 @@ class TestParams(object):
         self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
         self.cuda_device = 1
         self.test_norm_per_image = False
+        # the maximal allowed size in bytes for embeddings on CUDA
+        # if the embeddings take more space, move them to CPU
+        self.embeddings_cuda_size = 2 ** 30
 
         # in ResNet, before first layer, there are 2 modules with parameters.
         # then number of blocks per layers:
@@ -146,6 +152,15 @@ class TestParams(object):
         self.save(f, prefix)
         # the following will not work on Windows (would need to add a remove first)
         rename(f.name, path.join(self.save_dir, self.unique_str() + '.params'))
+
+    def log_detail(self, p_file, *args):
+        print(*args, file=p_file)
+        if fname:
+            with open(self.log_file, 'a') as f:
+                print(*args, file=f)
+
+    def log(self, *args):
+        self.log_detail(sys.stdout, *args)
 
 
 # global test params:

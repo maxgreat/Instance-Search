@@ -47,11 +47,11 @@ def test_print_classif(net, testset_tuple, labels, bestScore=0, epoch=0):
         prefix = 'CLASSIF, EPOCH:{0}, SCORE:{1}'.format(epoch, c)
         P.save_uuid(prefix)
         torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_classif.ckpt"))
-    log(P.log_file, 'TEST - correct:{0}/{1} - acc:{2}'.format(c, t, float(c) / t))
+    P.log('TEST - correct:{0}/{1} - acc:{2}'.format(c, t, float(c) / t))
 
     c, t = test_classif_net(net, testTrainSet, labels, P.classif_test_batch_size)
     torch.save(net, path.join(P.save_dir, "model_classif_" + str(epoch) + ".ckpt"))
-    log(P.log_file, "TRAIN - correct:{0}/{1} - acc:{2}".format(c, t, float(c) / t))
+    P.log("TRAIN - correct:{0}/{1} - acc:{2}".format(c, t, float(c) / t))
     net.train()
     return bestScore
 
@@ -96,7 +96,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
         running_loss += loss.data[0]
         disp_int = P.classif_loss_int
         if batchCount % disp_int == disp_int - 1:
-            log(P.log_file, '[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
+            P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
             running_loss = 0.0
 
         test_int = P.classif_test_int

@@ -36,15 +36,15 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
     criterion = nn.CrossEntropyLoss()
     testset_tuple = (testTrainSetClassif, testSetClassif)
     if P.classif_test_upfront:
-        log(P.log_file, 'Upfront testing of classification model')
+        P.log('Upfront testing of classification model')
         score = test_print_classif(class_net, testset_tuple, labels)
     else:
         score = 0
     if P.classif_train:
-        log(P.log_file, 'Starting classification training')
+        P.log('Starting classification training')
         # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
         train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
-        log(P.log_file, 'Finished classification training')
+        P.log('Finished classification training')
     return class_net
 
 
@@ -66,7 +66,7 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
         criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
     testset_tuple = (testSetSiam, testTrainSetSiam)
     if P.siam_test_upfront:
-        log(P.log_file, 'Upfront testing of Siamese net')
+        P.log('Upfront testing of Siamese net')
         score = test_print_siamese(net, testset_tuple)
     else:
         score = 0
@@ -75,9 +75,9 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
     else:
         f = train_siam_triplets
     if P.siam_train:
-        log(P.log_file, 'Starting descriptor training')
+        P.log('Starting descriptor training')
         f(net, trainSetSiam, testset_tuple, criterion, optimizer, bestScore=score)
-        log(P.log_file, 'Finished descriptor training')
+        P.log('Finished descriptor training')
 
 
 def main():
@@ -91,7 +91,7 @@ def main():
     listLabel = [t[1] for t in trainSetFull if 'wall' not in t[1]]
     labels = list(set(listLabel))  # we have to give a number for each label
 
-    log(P.log_file, 'Loading and transforming train/test sets.')
+    P.log('Loading and transforming train/test sets.')
 
     # open the images (and transform already if possible)
     # do that only if it fits in memory !
@@ -120,7 +120,7 @@ def main():
     class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
     feature_net = FeatureNet(class_net, P.feature_size2d, P.feature_net_average, P.feature_net_classify)
     if P.feature_net_upfront:
-        log(P.log_file, 'Upfront testing of class/feature net as global descriptor')
+        P.log('Upfront testing of class/feature net as global descriptor')
         test_print_siamese(feature_net, (testSetSiam, testTrainSetSiam))
     siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam)
 
@@ -130,5 +130,5 @@ if __name__ == '__main__':
         try:
             main()
         except:
-            log_detail(P.log_file, sys.stderr, traceback.format_exc())
+            P.log_detail(sys.stderr, traceback.format_exc())
             raise

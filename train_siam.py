@@ -15,16 +15,19 @@ from test_params import P
 # transformations per image (need to decide on that number)
 
 
-def get_device_and_size(net, n):
-    # get best device for embeddings, as well as the feature vector size
+def get_device_and_size(net, n, sim_matrix=False):
+    # get best device for embeddings (and possibly similarity matrix),
+    # as well as the feature vector size.
     # usually, this is the configured cuda device.
-    # but it could be CPU if embeddings are too large
+    # but it could be CPU if embeddings/number of items are too large
     device = P.cuda_device
     out_size = P.siam_feature_dim
     if hasattr(net, 'feature_size'):
         out_size = net.feature_size
-    if n * out_size * 4 > 2 ** 30:
+    if n * out_size * 4 > P.embeddings_cuda_size:
         # we will consume more than 1 GB here. use CPU
+        device = -1
+    if sim_matrix and n * n * 4 > P.embeddings_cuda_size:
         device = -1
     return device, out_size
 
@@ -52,6 +55,26 @@ def get_embeddings(net, dataset, device, out_size):
         return embeddings
     init = tensor(device, len(dataset), out_size)
     return fold_batches(batch, init, dataset, P.siam_test_batch_size)
+
+
+# get all similarities between pairs of images of the dataset
+# net is assumed to be in train mode
+def get_similarities(net, dataset):
+    net.eval()
+    n = len(dataset)
+    d, o = get_device_and_size(net, n, sim_matrix=True)
+    embeddings = get_embeddings(net, dataset, d, o)
+    similarities = torch.mm(embeddings, embeddings.t())
+    net.train()
+    return similarities, d
+
+
+# return a random negative for the given label and train set
+def choose_rand_neg(trainSet, lab):
+    k = random.randrange(len(trainSet))
+    while (trainSet[k][1] == lab):
+        k = random.randrange(len(trainSet))
+    return trainSet[k][0]
 
 
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
@@ -93,7 +116,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
         s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\n'.format(c, t, float(c) / t)
         s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
-        log(P.log_file, prefix + s1 + s2)
+        P.log(prefix + s1 + s2)
 
     testSet, testRefSet = testset_tuple
     net.eval()
@@ -127,7 +150,7 @@ def siam_train_stats(net, testset_tuple, epoch, batchCount, last_batch, loss, ru
     test_int = P.siam_test_int
     running_loss += loss
     if batchCount % disp_int == disp_int - 1:
-        log(P.log_file, '[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
+        P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
         running_loss = 0.0
     # test model every x mini-batches
     if ((test_int > 0 and batchCount % test_int == test_int - 1) or
@@ -159,10 +182,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
                 # with a given probability, choose negative couple
                 # at random, if not choose positive couple at random
                 if random.random() < P.siam_couples_p:
-                    k = random.randrange(len(trainSet))
-                    while (trainSet[k][1] == lab):
-                        k = random.randrange(len(trainSet))
-                    train_in2[j] = trans(trainSet[k][0])
+                    train_in2[j] = trans(choose_rand_neg(trainSet, lab))
                     train_labels[j] = -1
                 else:
                     k = random.randrange(len(couples[lab]))
@@ -180,11 +200,15 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= num_train, loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
-    couples = get_pos_couples(trainSet)
+    couples = get_pos_couples_im(trainSet)
     num_pos = sum(len(couples[l]) for l in couples)
-    log(P.log_file, '#pos:{0}'.format(num_pos))
+    P.log('#pos:{0}'.format(num_pos))
     net.train()
     for epoch in range(P.siam_train_epochs):
+        if P.siam_choice_mode == 'hard':
+            # get all similarities between embeddings on the test train set
+            similarities, _ = get_similarities(net, testset_tuple[1])
+
         random.shuffle(trainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
         _, bestScore, _ = fold_batches(train_couples, init, trainSet, P.siam_train_batch_size)
@@ -257,15 +281,15 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 sim_pos = similarities[i1, i2]
                 c = tensor_t(torch.ByteTensor, sim_device, similarities.size(0)).fill_(1)
                 for k, (_, neg_lab) in enumerate(trainSet):
-                    if neg_lab == lab or
-                    (epoch < P.siam_triplets_switch and
-                     similarities[i1, k] >= sim_pos):
+                    if (neg_lab == lab or
+                        (epoch < P.siam_triplets_switch and
+                         similarities[i1, k] >= sim_pos)):
                         c[k] = 0
                 all_sim_neg = similarities[i1].clone()
                 if all_sim_neg[c].size(0) <= 0:
                     p = 'cant find semi-hard neg for'
                     s = 'falling back to random neg'
-                    log(P.log_file, '{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
+                    P.log('{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
                     k = random.randrange(len(trainSet))
                     while (trainSet[k][1] == lab):
                         k = random.randrange(len(trainSet))
@@ -315,7 +339,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     # then choose negative for each couple specifically
     couples = get_pos_couples(trainSet)
     num_pos = sum(len(couples[l]) for l in couples)
-    log(P.log_file, '#pos:{0}'.format(num_pos))
+    P.log('#pos:{0}'.format(num_pos))
     if P.siam_choice_mode == 'semi-hard':
         f = train_triplets_semi_hard
     else:
@@ -326,17 +350,9 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         # for the 'hard' triplets, we need to know the embeddings of all
         # images at each epoch. so pre-calculate them here
         if P.siam_choice_mode == 'semi-hard':
-            net.eval()
             # use the test-train set to obtain embeddings and similarities
             # (since it may be transformed differently than train set)
-            n = len(testset_tuple[1])
-            sim_device, o = get_device_and_size(net, n)
-            if n ** 2 * 4 > 2 ** 30:
-                # use CPU if the similarity matrix is too big
-                sim_device = -1
-            embeddings = get_embeddings(net, testset_tuple[1], sim_device, o)
-            similarities = torch.mm(embeddings, embeddings.t())
-            net.train()
+            similarities, sim_device = get_similarities(net, testset_tuple[1])
 
         # for triplets, need to make sure the couples are evenly
         # distributed (such that all batches can have couples from
