@@ -1,6 +1,5 @@
 # -*- encoding: utf-8 -*-
 
-import sys
 import traceback
 import torch.optim as optim
 from PIL import Image
@@ -72,8 +71,10 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
         score = 0
     if P.siam_train_mode == 'couples':
         f = train_siam_couples
+    elif P.siam_choice_mode == 'easy-hard':
+        f = train_siam_triplets_ibi
     else:
-        f = train_siam_triplets
+        f = train_siam_triplets_pos_couples
     if P.siam_train:
         P.log('Starting descriptor training')
         f(net, trainSetSiam, testset_tuple, criterion, optimizer, bestScore=score)
@@ -130,5 +131,5 @@ if __name__ == '__main__':
         try:
             main()
         except:
-            P.log_detail(sys.stderr, traceback.format_exc())
+            P.log_detail(None, traceback.format_exc())
             raise

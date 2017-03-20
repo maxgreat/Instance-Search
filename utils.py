@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import torch
+import torch.optim as optim
 import torchvision.transforms as transforms
 import types
 import random
@@ -67,18 +68,18 @@ def random_affine(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0):
 
 
 # ------------ Generators for couples/triplets ------------------
-# get couples of images as a dict with images as keys and all other
+# get couples of images as a dict with images as keys and all
 # images of same label as values
-def get_pos_couples_im(dataset):
+def get_pos_couples_ibi(dataset, duplicate=True):
     couples = {}
-    for x1, l1 in dataset:
-        for x2, l2 in dataset:
-            if l1 != l2 or x1 == x2:
-                continue
-            if x1 in couples:
-                couples[x1].append(x2)
-            else:
-                couples[x1] = [x2]
+    for (x1, l1), (x2, l2) in itertools.product(dataset, dataset):
+        if l1 != l2 or (x1 is x2 and not duplicate):
+            continue
+        if x1 in couples:
+            couples[x1].append(x2)
+        else:
+            couples[x1] = [x2]
+    return couples
 
 
 # get the positive couples of a dataset as a dict with labels as keys
@@ -115,6 +116,16 @@ def fold_batches(f, init, x, batch_size):
     if batch_size <= 0:
         return f(init, 0, x)
     return functools.reduce(lambda last, idx: f(last, idx, x[idx:min(idx + batch_size, len(x))]), range(0, len(x), batch_size), init)
+
+
+def anneal(net, optimizer, epoch, annealing_dict):
+    if epoch not in annealing_dict:
+        return optimizer
+    default_group = optimizer.state_dict()['param_groups'][0]
+    lr = default_group['lr'] * annealing_dict[epoch]
+    momentum = default_group['momentum']
+    weight_decay = default_group['weight_decay']
+    return optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
 
 # ----------------------- Unused ---------------------------------

@@ -1,6 +1,5 @@
 # -*- encoding: utf-8 -*-
 
-import torch.optim as optim
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 
@@ -101,19 +100,14 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
 
         test_int = P.classif_test_int
         if ((test_int > 0 and batchCount % test_int == test_int - 1) or
-                (i + batchSize >= len(trainSet) and test_int <= 0)):
+                (test_int <= 0 and i + batchSize >= len(trainSet))):
             score = test_print_classif(net, testset_tuple, labels, score, epoch + 1)
         return batchCount + 1, score, running_loss
 
     net.train()
     for epoch in range(P.classif_train_epochs):
         # annealing
-        if epoch in P.classif_annealing:
-            default_group = optimizer.state_dict()['param_groups'][0]
-            lr = default_group['lr'] * P.classif_annealing[epoch]
-            momentum = default_group['momentum']
-            weight_decay = default_group['weight_decay']
-            optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
 
         init = 0, bestScore, 0.0  # batch count, score, running loss
         random.shuffle(trainSet)

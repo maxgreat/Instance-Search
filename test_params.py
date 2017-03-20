@@ -110,27 +110,49 @@ class TestParams(object):
         # 'hard': using all positives and hardest negative couples
         # for 'triplets':
         # 'rand': using random negatives for all positives
-        # 'semi-hard':semi-hard triplets
-        # (see FaceNet paper by Schroff et al)
-        self.siam_train_mode = 'couples'
-        self.siam_choice_mode = 'rand'
-        self.siam_triplet_margin = 0.2
-        # for triplet:semi-hard mode, number of epochs after which we
-        # take only the hardest examples:
-        self.siam_triplets_switch = 10
+        # 'hard': hard triplets for all positives
+        # 'semi-hard': semi-hard triplets for all positives
+        # 'easy-hard': easiest positives with hardest negatives
+        self.siam_train_mode = 'triplets'
+        self.siam_choice_mode = 'semi-hard'
+
+        # general train params
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
-        self.siam_couples_p = 0.9
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 32
+        self.siam_train_micro_batch = 4
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
         self.siam_optim = 'SGD'
-        self.siam_annealing = {}
-        self.siam_train_epochs = 50
+        self.siam_annealing = {25: 0.1}
+        self.siam_train_epochs = 100
         self.siam_loss_int = 10
-        self.siam_test_int = 50
+        self.siam_test_int = 0
+
+        # couples params
+        self.siam_couples_p = 0.8
+
+        # triplets general params
+        self.siam_triplet_margin = 0.2
+
+        # params for semi-hard mode
+        # number of epochs after which we
+        # take only the hardest examples:
+        self.siam_triplets_switch = 10
+
+        # params for easy-hard choice mode
+        # n_p: number of positives for each image
+        # n_n: number of negatives for each image
+        # n_t: number of triplets actually used for each images
+        # Attention: each micro-batch will be composed of n * n_t triplets
+        # if n is the configured size of the micro-batch
+        # Note that if less than n_p positives or n_n negatives exist,
+        # we clamp the value to the number of positives/negatives resp.
+        # Thus, we must have n_t <= n_p and n_t <= n_n
+        self.siam_easy_hard_n_p = 8
+        self.siam_easy_hard_n_n = 64
+        self.siam_easy_hard_n_t = 8
 
     def unique_str(self):
         return self.uuid.strftime('%Y%m%d-%H%M%S-%f')
@@ -154,8 +176,9 @@ class TestParams(object):
         rename(f.name, path.join(self.save_dir, self.unique_str() + '.params'))
 
     def log_detail(self, p_file, *args):
-        print(*args, file=p_file)
-        if fname:
+        if p_file:
+            print(*args, file=p_file)
+        if self.log_file:
             with open(self.log_file, 'a') as f:
                 print(*args, file=f)
 

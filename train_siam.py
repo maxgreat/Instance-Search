@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import random
+import itertools
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 
@@ -77,6 +78,21 @@ def choose_rand_neg(trainSet, lab):
     return trainSet[k][0]
 
 
+# get byte tensors indicating the indexes of images having a different label
+def get_lab_indicators(dataset, device):
+    n = len(dataset)
+    indicators = {}
+    for _, lab1 in dataset:
+        if lab1 in indicators:
+            continue
+        indicator = tensor_t(torch.ByteTensor, device, n).fill_(0)
+        for i2, (_, lab2) in enumerate(dataset):
+            if lab1 == lab2:
+                indicator[i2] = 1
+        indicators[lab1] = indicator
+    return indicators
+
+
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
@@ -145,7 +161,7 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     return bestScore
 
 
-def siam_train_stats(net, testset_tuple, epoch, batchCount, last_batch, loss, running_loss, score):
+def siam_train_stats(net, testset_tuple, epoch, batchCount, is_last, loss, running_loss, score):
     disp_int = P.siam_loss_int
     test_int = P.siam_test_int
     running_loss += loss
@@ -154,67 +170,176 @@ def siam_train_stats(net, testset_tuple, epoch, batchCount, last_batch, loss, ru
         running_loss = 0.0
     # test model every x mini-batches
     if ((test_int > 0 and batchCount % test_int == test_int - 1) or
-            (last_batch and test_int <= 0)):
+            (test_int <= 0 and is_last)):
         score = test_print_siamese(net, testset_tuple, score, epoch + 1)
     return running_loss, score
 
 
 def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+    C, H, W = P.image_input_size
     trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         trans = transforms.Compose([])
 
+    def micro_batch(last, i, batch):
+        n = len(batch)
+        train_in1 = tensor(P.cuda_device, n, C, H, W)
+        train_in2 = tensor(P.cuda_device, n, C, H, W)
+        train_labels = tensor(P.cuda_device, n)
+        for j, (i1, (im1, lab)) in enumerate(batch):
+            train_in1[j] = trans(im1)
+            # with a given probability, choose negative couple,
+            # else positive couple
+            if random.random() < P.siam_couples_p:
+                if P.siam_choice_mode == 'hard':
+                    # always choose hardest negative
+                    neg_sims = similarities[i1].clone()
+                    # similarity is in [-1, 1]
+                    neg_sims[lab_indicators[lab]] = -2
+                    _, k = neg_sims.max(0)
+                    im2 = trainSet[k[0]][0]
+                else:
+                    # choose random negative for this label
+                    im2 = choose_rand_neg(trainSet, lab)
+                train_in2[j] = trans(im2)
+                train_labels[j] = -1
+            else:
+                # choose any positive randomly
+                k = random.randrange(len(couples[im1]))
+                train_in2[j] = trans(couples[im1][k])
+                train_labels[j] = 1
+        out1, out2 = net(Variable(train_in1), Variable(train_in2))
+        loss = criterion(out1, out2, Variable(train_labels))
+        loss.backward()
+        return last + loss.data[0]
+
     def train_couples(last, i, batch):
         batchCount, score, running_loss = last
-
-        # using sub-batches (only pairs with biggest loss)
-        # losses = []
-        # TODO
-
-        # get the inputs, choose second input at random
-        def micro_batch(last, i, batch):
-            n = len(batch)
-            train_in1 = tensor(P.cuda_device, n, C, H, W)
-            train_in2 = tensor(P.cuda_device, n, C, H, W)
-            train_labels = tensor(P.cuda_device, n)
-            for j, (im1, lab) in enumerate(batch):
-                train_in1[j] = trans(im1)
-                # with a given probability, choose negative couple
-                # at random, if not choose positive couple at random
-                if random.random() < P.siam_couples_p:
-                    train_in2[j] = trans(choose_rand_neg(trainSet, lab))
-                    train_labels[j] = -1
-                else:
-                    k = random.randrange(len(couples[lab]))
-                    train_in2[j] = trans(couples[lab][k])
-                    train_labels[j] = 1
-            out1, out2 = net(Variable(train_in1), Variable(train_in2))
-            loss = criterion(out1, out2, Variable(train_labels))
-            loss.backward()
-            return last + loss.data[0]
 
         # zero the parameter gradients, then forward + back prop
         optimizer.zero_grad()
         loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= num_train, loss, running_loss, score)
+        is_last = i + len(batch) >= len(idxTrainSet)
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_last, loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
-    couples = get_pos_couples_im(trainSet)
-    num_pos = sum(len(couples[l]) for l in couples)
-    P.log('#pos:{0}'.format(num_pos))
+    couples = get_pos_couples_ibi(trainSet)
+    num_pos = sum(len(couples[im]) for im in couples)
+    P.log('#pos (with order, with duplicates):{0}'.format(num_pos))
+    idxTrainSet = list(enumerate(trainSet))
+    if P.siam_choice_mode == 'hard':
+        # get all similarities between embeddings on the test train set
+        similarities, sim_device = get_similarities(net, testset_tuple[1])
+        lab_indicators = get_lab_indicators(trainSet, sim_device)
     net.train()
     for epoch in range(P.siam_train_epochs):
+        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        random.shuffle(idxTrainSet)
+        init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
+        _, bestScore, _ = fold_batches(train_couples, init, idxTrainSet, P.siam_train_batch_size)
         if P.siam_choice_mode == 'hard':
-            # get all similarities between embeddings on the test train set
+            # update similarities
             similarities, _ = get_similarities(net, testset_tuple[1])
 
-        random.shuffle(trainSet)
+
+# train using triplets image by image
+def train_siam_triplets_ibi(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+    C, H, W = P.image_input_size
+    train_trans = P.siam_train_trans
+    if P.siam_train_pre_proc:
+        train_trans = transforms.Compose([])
+
+    def micro_batch(last, i, batch):
+        n = len(batch)
+        if P.siam_choice_mode == 'easy-hard':
+            n *= P.siam_easy_hard_n_t
+        train_in1 = tensor(P.cuda_device, n, C, H, W)
+        train_in2 = tensor(P.cuda_device, n, C, H, W)
+        train_in3 = tensor(P.cuda_device, n, C, H, W)
+        # we get a batch of positive couples
+        # find negatives for each couple
+        for j, (i1, (im1, lab)) in enumerate(batch):
+            # TODO loss is bad. possibly doing something wrong here
+            if P.siam_choice_mode == 'easy-hard':
+                # choose n_p easiest positives and n_n hardest negatives
+                # compute loss for all possible triplets, then choose
+                # n_t hardest triplets
+                ind_pos = lab_indicators[lab]
+                ind_neg = 1 - ind_pos
+                n_n = min(P.siam_easy_hard_n_n, ind_neg.sum())
+                n_p = min(P.siam_easy_hard_n_p, ind_pos.sum())
+
+                sim_negs = similarities[i1].clone()
+                # similarity is in [-1, 1]
+                sim_negs[ind_pos] = -2
+                _, hard_negs = sim_negs.topk(n_n)
+
+                sim_pos = similarities[i1].clone()
+                sim_pos[ind_neg] = -2
+                _, easy_pos = sim_pos.topk(n_p)
+                # get the loss values and keep the highest n_t ones
+                # loss is in [0, 2 + margin]
+                n_t = P.siam_easy_hard_n_t
+                topk_loss = [(-1, None) for k in range(n_t)]
+                v1 = Variable(embeddings[i1].view(1, -1), volatile=True)
+                for i_pos, i_neg in itertools.product(easy_pos, hard_negs):
+                    v2 = Variable(embeddings[i_pos].view(1, -1), volatile=True)
+                    v3 = Variable(embeddings[i_neg].view(1, -1), volatile=True)
+                    loss = criterion(v1, v2, v3).data[0]
+                    if loss > topk_loss[n_t - 1][0]:
+                        topk_loss[n_t - 1] = (loss, (i_pos, i_neg))
+                        # sort topk from greatest to smallest loss
+                        topk_loss.sort(key=lambda x: -x[0])
+                for k, (_, (i_pos, i_neg)) in enumerate(topk_loss):
+                    train_in1[j + k] = train_trans(im1)
+                    train_in2[j + k] = train_trans(trainSet[i_pos][0])
+                    train_in3[j + k] = train_trans(trainSet[i_neg][0])
+            else:
+                # choose random positive and random negative
+                k = random.randrange(len(pos_couples[im1]))
+                im2 = pos_couples[im1][k]
+                im3 = choose_rand_neg(trainSet, lab)
+                train_in1[j] = train_trans(im1)
+                train_in2[j] = train_trans(im2)
+                train_in3[j] = train_trans(im3)
+        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
+        loss = criterion(out1, out2, out3)
+        loss.backward()
+        return last + loss.data[0]
+
+    def train_batch(last, i, batch):
+        batchCount, score, running_loss = last
+        optimizer.zero_grad()
+        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
+        optimizer.step()
+        is_last = i + len(batch) >= len(idxTrainSet)
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_last, loss, running_loss, score)
+        return batchCount + 1, score, running_loss
+
+    pos_couples = get_pos_couples_ibi(trainSet)
+    num_pos = sum(len(pos_couples[im]) for im in pos_couples)
+    P.log('#pos (with order, with duplicates):{0}'.format(num_pos))
+    idxTrainSet = list(enumerate(trainSet))
+    sim_device, size = get_device_and_size(net, len(trainSet), sim_matrix=True)
+    lab_indicators = get_lab_indicators(trainSet, sim_device)
+    net.train()
+    for epoch in range(P.siam_train_epochs):
+        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        if P.siam_choice_mode == 'easy-hard':
+            # in each epoch, update embeddings/similarities
+            # get the values from the test-train set
+            net.eval()
+            embeddings = get_embeddings(net, testset_tuple[1], sim_device, size)
+            similarities = torch.mm(embeddings, embeddings.t())
+            net.train()
+        random.shuffle(idxTrainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_couples, init, trainSet, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_batch, init, idxTrainSet, P.siam_train_batch_size)
 
 
-def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+# train using triplets, constructing triplets from all positive couples
+def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
     """
         Train a network
         inputs :
@@ -229,88 +354,68 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])
 
-    def train_triplets(last, i, batch):
-        batchCount, score, running_loss = last
-
-        def micro_batch(last, i, batch):
-            n = len(batch)
-            train_in1 = tensor(P.cuda_device, n, C, H, W)
-            train_in2 = tensor(P.cuda_device, n, C, H, W)
-            train_in3 = tensor(P.cuda_device, n, C, H, W)
-            # we get a batch of positive couples
-            # find random negatives for each couple
-            for j, (lab, _, (x1, x2)) in enumerate(batch):
-                k = random.randrange(len(trainSet))
-                while (trainSet[k][1] == lab):
-                    k = random.randrange(len(trainSet))
-                train_in1[j] = train_trans(x1)
-                train_in2[j] = train_trans(x2)
-                train_in3[j] = train_trans(trainSet[k][0])
-            out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-            loss = criterion(out1, out2, out3)
-            loss.backward()
-            return last + loss.data[0]
-
-        optimizer.zero_grad()
-        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
-        optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= len(couples), loss, running_loss, score)
-        return batchCount + 1, score, running_loss
-
-    def train_triplets_semi_hard(last, i, batch):
-        batchCount, score, running_loss = last
+    def micro_batch(last, i, batch):
+        n = len(batch)
+        train_in1 = tensor(P.cuda_device, n, C, H, W)
+        train_in2 = tensor(P.cuda_device, n, C, H, W)
+        train_in3 = tensor(P.cuda_device, n, C, H, W)
         # we get a batch of positive couples
-        # for each couple, find a negative such that the embedding is
-        # semi-hard (using the one with smallest distance can collapse
-        # the model, according to Schroff et al - FaceNet) so find
-        # one that lies in the margin (alpha) used by the loss to
-        # discriminate between positive and negative pair
-        # for normalized vectors x and y, we have ||x-y||^2 = 2 - 2xy
-        # so finding a negative example such that ||x-x_p||^2 < ||x-x_n||^2
-        # is equivalent to having x.x_p > x.x_n
-        # after x epochs, we only take the hardest negative examples
-
-        # TODO: triplet selection from Gordo (see mail)
-
-        def micro_batch(last, i, batch):
-            n = len(batch)
-            train_in1 = tensor(P.cuda_device, n, C, H, W)
-            train_in2 = tensor(P.cuda_device, n, C, H, W)
-            train_in3 = tensor(P.cuda_device, n, C, H, W)
-            for j, (lab, (i1, i2), (x1, x2)) in enumerate(batch):
+        # find negatives for each couple
+        for j, (lab, (i1, i2), (im1, im2)) in enumerate(batch):
+            im3 = None
+            if P.siam_choice_mode == 'hard':
+                # choose hardest negative every time
+                ind_exl = lab_indicators[lab]
+                sims = similarities[i1].clone()
+                # similarity is in [-1, 1]
+                sims[ind_exl] = -2
+                _, k = sims.max(0)
+                im3 = trainSet[k[0]][0]
+            elif P.siam_choice_mode == 'semi-hard':
+                # choose a semi-hard negative. see FaceNet
+                # paper by Schroff et al for details.
+                # essentially, choose hardest negative that is still
+                # easier than the positive. this should avoid
+                # collapsing the model at beginning of training
+                ind_exl = lab_indicators[lab]
                 sim_pos = similarities[i1, i2]
-                c = tensor_t(torch.ByteTensor, sim_device, similarities.size(0)).fill_(1)
-                for k, (_, neg_lab) in enumerate(trainSet):
-                    if (neg_lab == lab or
-                        (epoch < P.siam_triplets_switch and
-                         similarities[i1, k] >= sim_pos)):
-                        c[k] = 0
-                all_sim_neg = similarities[i1].clone()
-                if all_sim_neg[c].size(0) <= 0:
+                if epoch < P.siam_triplets_switch:
+                    lt_ind = similarities[i1].lt(sim_pos)
+                    # consider all negatives that are less similar than sim_pos
+                    ind_cons = (1 - ind_exl).eq(lt_ind)
+                    # ind represents all that we want to exclude
+                    ind_exl = 1 - ind_cons
+                else:
+                    ind_cons = 1 - ind_exl
+                sims = similarities[i1].clone()
+                considered = sims[ind_cons]
+                if considered.dim() <= 0 or considered.size(0) <= 0:
                     p = 'cant find semi-hard neg for'
                     s = 'falling back to random neg'
                     P.log('{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
-                    k = random.randrange(len(trainSet))
-                    while (trainSet[k][1] == lab):
-                        k = random.randrange(len(trainSet))
-                    x3 = trainSet[k][0]
                 else:
-                    # since we're normalized, upper bound for similarity is 1
-                    all_sim_neg[c] = 2
-                    _, k3 = all_sim_neg.min(0)
-                    x3 = trainSet[k3[0]][0]
-                train_in1[j] = train_trans(x1)
-                train_in2[j] = train_trans(x2)
-                train_in3[j] = train_trans(x3)
-            out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-            loss = criterion(out1, out2, out3)
-            loss.backward()
-            return last + loss.data[0]
+                    sims[ind_exl] = -2
+                    _, k = sims.max(0)
+                    im3 = trainSet[k[0]][0]
+            if im3 is None:
+                # default to random negative
+                im3 = choose_rand_neg(trainSet, lab)
+            train_in1[j] = train_trans(im1)
+            train_in2[j] = train_trans(im2)
+            train_in3[j] = train_trans(im3)
+        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
+        loss = criterion(out1, out2, out3)
+        loss.backward()
+        return last + loss.data[0]
+
+    def train_triplets(last, i, batch):
+        batchCount, score, running_loss = last
 
         optimizer.zero_grad()
         loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
         optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, i + len(batch) >= len(couples), loss, running_loss, score)
+        is_last = i + len(batch) >= num_train
+        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_last, loss, running_loss, score)
         return batchCount + 1, score, running_loss
 
     def shuffle_couples(couples):
@@ -335,28 +440,22 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
                 out.insert(random.randrange(len(out)), couples[l][i])
         return out
 
-    # for triplets, only fold over positive couples.
-    # then choose negative for each couple specifically
     couples = get_pos_couples(trainSet)
-    num_pos = sum(len(couples[l]) for l in couples)
-    P.log('#pos:{0}'.format(num_pos))
-    if P.siam_choice_mode == 'semi-hard':
-        f = train_triplets_semi_hard
-    else:
-        f = train_triplets
+    num_train = num_pos = sum(len(couples[l]) for l in couples)
+    P.log('#pos (without order, with duplicates):{0}'.format(num_pos))
 
+    sim_device, _ = get_device_and_size(net, len(trainSet), sim_matrix=True)
+    lab_indicators = get_lab_indicators(trainSet, sim_device)
     net.train()
     for epoch in range(P.siam_train_epochs):
-        # for the 'hard' triplets, we need to know the embeddings of all
-        # images at each epoch. so pre-calculate them here
-        if P.siam_choice_mode == 'semi-hard':
-            # use the test-train set to obtain embeddings and similarities
-            # (since it may be transformed differently than train set)
-            similarities, sim_device = get_similarities(net, testset_tuple[1])
+        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        # use the test-train set to obtain embeddings and similarities
+        # (since it may be transformed differently than train set)
+        similarities, sim_device = get_similarities(net, testset_tuple[1])
 
-        # for triplets, need to make sure the couples are evenly
-        # distributed (such that all batches can have couples from
-        # every instance)
+        # fold over positive couples here and choose negative for each pos
+        # need to make sure the couples are evenly distributed
+        # such that all batches can have couples from every instance
         shuffled = shuffle_couples(couples)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(f, init, shuffled, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_triplets, init, shuffled, P.siam_train_batch_size)
