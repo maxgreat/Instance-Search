@@ -110,12 +110,28 @@ def tensor(device, *sizes):
     return tensor_t(torch.Tensor, device, *sizes)
 
 
+# ---------------------- ByteTensor Ops ------------------------
+# not operation for a ByteTensor filled with 0, 1
+def t_not(t):
+    return t.eq(0)
+
+
+def t_not_(t):
+    return t.eq_(0)
+
+
 # evaluate a function by batches of size batch_size on the set x
 # and fold over the returned values
 def fold_batches(f, init, x, batch_size):
+    nx = len(x)
     if batch_size <= 0:
-        return f(init, 0, x)
-    return functools.reduce(lambda last, idx: f(last, idx, x[idx:min(idx + batch_size, len(x))]), range(0, len(x), batch_size), init)
+        return f(init, 0, True, x)
+
+    def red(last, idx):
+        end = min(idx + batch_size, nx)
+        is_final = end == nx
+        return f(last, idx, is_final, x[idx:end])
+    return functools.reduce(red, range(0, len(x), batch_size), init)
 
 
 def anneal(net, optimizer, epoch, annealing_dict):

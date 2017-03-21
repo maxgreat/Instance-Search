@@ -21,7 +21,7 @@ def test_classif_net(net, testSet, labels, batchSize):
     if P.test_norm_per_image:
         trans.transforms.append(norm_image_t)
 
-    def eval_batch_test(last, i, batch):
+    def eval_batch_test(last, i, is_final, batch):
         correct, total = last
         C, H, W = P.image_input_size
         test_in = tensor(P.cuda_device, len(batch), C, H, W)
@@ -65,7 +65,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
             * loss function (criterion)
             * optimizer
     """
-    def train_batch(last, i, batch):
+    def train_batch(last, i, is_final, batch):
         batchCount, score, running_loss = last
         batchSize = len(batch)
         # get the inputs
@@ -100,7 +100,7 @@ def train_classif(net, trainSet, testset_tuple, labels, criterion, optimizer, be
 
         test_int = P.classif_test_int
         if ((test_int > 0 and batchCount % test_int == test_int - 1) or
-                (test_int <= 0 and i + batchSize >= len(trainSet))):
+                (test_int <= 0 and is_final)):
             score = test_print_classif(net, testset_tuple, labels, score, epoch + 1)
         return batchCount + 1, score, running_loss
 

@@ -31,8 +31,8 @@ class TestParams(object):
         self.mean_std_file = 'data/fourviere_224sq_train_ms.txt' if self.dataset_name == 'fourviere' else 'data/CLICIDE_224sq_train_ms.txt'
         self.dataset_match_img = match_fou_clean2 if self.dataset_name == 'fourviere' else match_video
         self.finetuning = True
-        self.cnn_model = models.alexnet
-        self.feature_size2d = (6, 6)
+        self.cnn_model = models.resnet152
+        self.feature_size2d = (7, 7)
         self.image_input_size = (3, 224, 224)
         self.save_dir = 'data'
         self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
@@ -120,12 +120,12 @@ class TestParams(object):
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 4
+        self.siam_train_micro_batch = 32
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
         self.siam_optim = 'SGD'
-        self.siam_annealing = {25: 0.1}
+        self.siam_annealing = {}
         self.siam_train_epochs = 100
         self.siam_loss_int = 10
         self.siam_test_int = 0
@@ -142,17 +142,15 @@ class TestParams(object):
         self.siam_triplets_switch = 10
 
         # params for easy-hard choice mode
-        # n_p: number of positives for each image
-        # n_n: number of negatives for each image
-        # n_t: number of triplets actually used for each images
-        # Attention: each micro-batch will be composed of n * n_t triplets
-        # if n is the configured size of the micro-batch
+        # n_p: number of easy positives for each image
+        # n_n: number of hard negatives for each image
+        # n_t: number of hardest triplets actually used for each image
         # Note that if less than n_p positives or n_n negatives exist,
         # we clamp the value to the number of positives/negatives resp.
         # Thus, we must have n_t <= n_p and n_t <= n_n
-        self.siam_easy_hard_n_p = 8
-        self.siam_easy_hard_n_n = 64
-        self.siam_easy_hard_n_t = 8
+        self.siam_easy_hard_n_p = 25
+        self.siam_easy_hard_n_n = 100
+        self.siam_easy_hard_n_t = 25
 
     def unique_str(self):
         return self.uuid.strftime('%Y%m%d-%H%M%S-%f')

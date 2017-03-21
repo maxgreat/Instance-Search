@@ -72,7 +72,7 @@ def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
     if P.siam_train_mode == 'couples':
         f = train_siam_couples
     elif P.siam_choice_mode == 'easy-hard':
-        f = train_siam_triplets_ibi
+        f = train_siam_triplets
     else:
         f = train_siam_triplets_pos_couples
     if P.siam_train:
