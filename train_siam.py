@@ -292,6 +292,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     def triplets_easy_hard(similarities, embeddings):
         triplets = []
         for i_im, (im, lab) in enumerate(trainSet):
+            # TODO this doesn't work at all, assuming there is some issue
             ind_pos = lab_indicators[lab]
             ind_neg = t_not(ind_pos)
             n_n = int(min(P.siam_easy_hard_n_n, ind_neg.sum()))
@@ -390,7 +391,10 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
                 if ind_exl.sum() >= similarities.size(0):
                     p = 'cant find semi-hard neg for'
                     s = 'falling back to random neg'
-                    P.log('{0} {1}-{2}-{3}, {4}'.format(p, i1, i2, lab, s))
+                    n_pos = lab_indicators[lab].sum()
+                    n_ge = similarities[i1].ge(sim_pos).sum()
+                    n_tot = similarities.size(0)
+                    P.log('{0} {1}-{2}-{3} (#pos:{4}, #ge:{5}, #total:{6}), {7}'.format(p, i1, i2, lab, n_pos, n_ge, n_tot, s))
                 else:
                     sims = similarities[i1].clone()
                     sims[ind_exl] = -2
