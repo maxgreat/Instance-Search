@@ -1,7 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 import random
-import itertools
+import math
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 
@@ -182,6 +182,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         trans = transforms.Compose([])
 
     def micro_batch(last, i, is_final, batch):
+        prev_loss, mini_batch_size = last
         n = len(batch)
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
@@ -209,15 +210,16 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
                 train_labels[j] = 1
         out1, out2 = net(Variable(train_in1), Variable(train_in2))
         loss = criterion(out1, out2, Variable(train_labels))
-        loss.backward()
-        return last + loss.data[0]
+        loss_micro = loss * n / mini_batch_size
+        loss_micro.backward()
+        return prev_loss + loss.data[0], mini_batch_size
 
     def train_couples(last, i, is_final, batch):
         batchCount, score, running_loss = last
 
         # zero the parameter gradients, then forward + back prop
         optimizer.zero_grad()
-        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
+        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
         return batchCount + 1, score, running_loss
@@ -235,7 +237,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
         random.shuffle(idxTrainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_couples, init, idxTrainSet, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_couples, init, idxTrainSet, P.siam_train_batch_size, cut_end=True)
         if P.siam_choice_mode == 'hard':
             # update similarities
             similarities, _ = get_similarities(net, testset_tuple[1])
@@ -257,6 +259,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     pos_couples = get_pos_couples_ibi(trainSet)
 
     def micro_batch(last, i, is_final, batch):
+        prev_loss, mini_batch_size = last
         n = len(batch)
         if P.siam_choice_mode == 'easy-hard':
             n *= P.siam_easy_hard_n_t
@@ -270,13 +273,14 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             train_in3[j] = train_trans(im3)
         out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
         loss = criterion(out1, out2, out3)
-        loss.backward()
-        return last + loss.data[0]
+        loss_micro = loss * n / mini_batch_size
+        loss_micro.backward()
+        return prev_loss + loss.data[0], mini_batch_size
 
     def train_batch(last, i, is_final, batch):
         batchCount, score, running_loss = last
         optimizer.zero_grad()
-        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
+        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
         return batchCount + 1, score, running_loss
@@ -340,7 +344,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             net.train()
         random.shuffle(triplets)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_batch, init, triplets, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_batch, init, triplets, P.siam_train_batch_size, cut_end=True)
 
 
 # train using triplets, constructing triplets from all positive couples
@@ -360,6 +364,7 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
         train_trans = transforms.Compose([])
 
     def micro_batch(last, i, is_final, batch):
+        prev_loss, mini_batch_size = last
         n = len(batch)
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
@@ -408,14 +413,16 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
             train_in3[j] = train_trans(im3)
         out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
         loss = criterion(out1, out2, out3)
-        loss.backward()
-        return last + loss.data[0]
+        loss_micro = loss * n / mini_batch_size
+        loss_micro.backward()
+        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
+        return prev_loss + val, mini_batch_size
 
     def train_triplets(last, i, is_final, batch):
         batchCount, score, running_loss = last
 
         optimizer.zero_grad()
-        loss = fold_batches(micro_batch, 0.0, batch, P.siam_train_micro_batch)
+        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
         optimizer.step()
         running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
         return batchCount + 1, score, running_loss
@@ -443,7 +450,7 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
         return out
 
     couples = get_pos_couples(trainSet)
-    num_train = num_pos = sum(len(couples[l]) for l in couples)
+    num_pos = sum(len(couples[l]) for l in couples)
     P.log('#pos (without order, with duplicates):{0}'.format(num_pos))
 
     sim_device, _ = get_device_and_size(net, len(trainSet), sim_matrix=True)
@@ -460,4 +467,4 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
         # such that all batches can have couples from every instance
         shuffled = shuffle_couples(couples)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_triplets, init, shuffled, P.siam_train_batch_size)
+        _, bestScore, _ = fold_batches(train_triplets, init, shuffled, P.siam_train_batch_size, cut_end=True)

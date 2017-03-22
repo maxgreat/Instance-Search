@@ -117,7 +117,7 @@ class TestParams(object):
         self.siam_choice_mode = 'semi-hard'
 
         # general train params
-        self.siam_train_trans = self.classif_train_trans
+        self.siam_train_trans = transforms.Compose([transforms.Scale(300), transforms.RandomCrop(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 256
         self.siam_train_micro_batch = 32
