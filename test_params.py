@@ -11,16 +11,49 @@ from os import rename, path
 from utils import *
 
 
+def match_fou_clean2(x):
+    s = x.split('/')[-1].split('_')
+    return s[0] + s[1]
+
+
+def match_video(x):
+    return x.split('/')[-1].split('-')[0]
+
+
+feature_sizes = {
+    models.alexnet: (6, 6),
+    models.resnet152: (7, 7)
+}
+
+
+mean_std_files = {
+    'CLICIDE_max_224sq': 'data/CLICIDE_224sq_train_ms.txt',
+    'fourviere_clean2_224sq': 'data/fourviere_224sq_train_ms.txt'
+}
+
+
+match_image = {
+    'CLICIDE_max_224sq': match_video,
+    'fourviere_clean2_224sq': match_fou_clean2
+}
+
+
+# in ResNet, before first layer, there are 2 modules with parameters.
+# then number of blocks per layers:
+# ResNet152 - layer 1: 3, layer 2: 8, layer 3: 36, layer 4: 3
+# ResNet50 - layer 1: 3, layer 2: 4, layer 3: 6, layer 4: 3
+# finally, a single FC layer is used as classifier
+# in AlexNet, there are 5 convolutional layers with parameters
+# and 3 FC layers in the classifier
+untrained_blocks = {
+    models.alexnet: 4,
+    models.resnet152: 2 + 3 + 8 + 36
+}
+
+
 class TestParams(object):
 
     def __init__(self):
-
-        def match_fou_clean2(x):
-            s = x.split('/')[-1].split('_')
-            return s[0] + s[1]
-
-        def match_video(x):
-            return x.split('/')[-1].split('-')[0]
 
         # UUID for these parameters (current time)
         self.uuid = datetime.now()
@@ -28,11 +61,12 @@ class TestParams(object):
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
-        self.mean_std_file = 'data/fourviere_224sq_train_ms.txt' if self.dataset_name == 'fourviere' else 'data/CLICIDE_224sq_train_ms.txt'
-        self.dataset_match_img = match_fou_clean2 if self.dataset_name == 'fourviere' else match_video
+        self.dataset_id = self.dataset_full.split('/')[-1]
+        self.mean_std_file = mean_std_files[self.dataset_id]
+        self.dataset_match_img = match_image[self.dataset_id]
         self.finetuning = True
-        self.cnn_model = models.resnet152
-        self.feature_size2d = (7, 7)
+        self.cnn_model = models.alexnet
+        self.feature_size2d = feature_sizes[self.cnn_model]
         self.image_input_size = (3, 224, 224)
         self.save_dir = 'data'
         self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
@@ -42,14 +76,7 @@ class TestParams(object):
         # if the embeddings take more space, move them to CPU
         self.embeddings_cuda_size = 2 ** 30
 
-        # in ResNet, before first layer, there are 2 modules with parameters.
-        # then number of blocks per layers:
-        # ResNet152 - layer 1: 3, layer 2: 8, layer 3: 36, layer 4: 3
-        # ResNet50 - layer 1: 3, layer 2: 4, layer 3: 6, layer 4: 3
-        # finally, a single FC layer is used as classifier
-        # in AlexNet, there are 5 convolutional layers with parameters
-        # and 3 FC layers in the classifier
-        self.untrained_blocks = (2 + 3 + 8 + 36) if self.cnn_model is models.resnet152 else 4
+        self.untrained_blocks = untrained_blocks[self.cnn_model]
 
         # read mean and standard of dataset here to define transforms already
         m, s = readMeanStd(self.mean_std_file)
@@ -120,7 +147,7 @@ class TestParams(object):
         self.siam_train_trans = transforms.Compose([transforms.Scale(300), transforms.RandomCrop(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 32
+        self.siam_train_micro_batch = 16
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
