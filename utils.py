@@ -122,16 +122,18 @@ def t_not_(t):
 
 # evaluate a function by batches of size batch_size on the set x
 # and fold over the returned values
-def fold_batches(f, init, x, batch_size):
+def fold_batches(f, init, x, batch_size, cut_end=False):
     nx = len(x)
     if batch_size <= 0:
         return f(init, 0, True, x)
 
     def red(last, idx):
         end = min(idx + batch_size, nx)
-        is_final = end == nx
+        if cut_end and idx + batch_size > nx:
+            return last
+        is_final = end > nx - batch_size if cut_end else end == nx
         return f(last, idx, is_final, x[idx:end])
-    return functools.reduce(red, range(0, len(x), batch_size), init)
+    return functools.reduce(red, range(0, nx, batch_size), init)
 
 
 def anneal(net, optimizer, epoch, annealing_dict):
