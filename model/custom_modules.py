@@ -120,9 +120,10 @@ class MetricLossFun(Function):
         if self.size_average:
             grad1.div_(y.size(0))
             grad2.div_(y.size(0))
-        if grad_output[0] != 1:
-            grad1.mul_(grad_output)
-            grad2.mul_(grad_output)
+        g = grad_output[0]
+        if g != 1:
+            grad1.mul_(g)
+            grad2.mul_(g)
         return grad1, grad2, None
 
 
@@ -194,10 +195,11 @@ class TripletLossFun(Function):
             grad_anchor.div_(anchor.size(0))
             grad_pos.div_(anchor.size(0))
             grad_neg.div_(anchor.size(0))
-        if grad_output[0] != 1:
-            grad_anchor = grad_anchor.mul_(grad_output)
-            grad_pos = grad_pos.mul_(grad_output)
-            grad_neg = grad_neg.mul_(grad_output)
+        g = grad_output[0]
+        if g != 1:
+            grad_anchor = grad_anchor.mul_(g)
+            grad_pos = grad_pos.mul_(g)
+            grad_neg = grad_neg.mul_(g)
         return grad_anchor, grad_pos, grad_neg
 
 
