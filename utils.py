@@ -83,10 +83,12 @@ def get_pos_couples_ibi(dataset, duplicate=True):
 
 
 # get the positive couples of a dataset as a dict with labels as keys
-def get_pos_couples(dataset):
+def get_pos_couples(dataset, duplicate=True):
     couples = {}
-    cwr = itertools.combinations_with_replacement
-    for (i1, (x1, l1)), (i2, (x2, l2)) in cwr(enumerate(dataset), 2):
+    comb = itertools.combinations_with_replacement
+    if not duplicate:
+        comb = itertools.combinations
+    for (i1, (x1, l1)), (i2, (x2, l2)) in comb(enumerate(dataset), 2):
         if l1 != l2:
             continue
         t = (l1, (i1, i2), (x1, x2))
