@@ -96,7 +96,7 @@ def get_lab_indicators(dataset, device):
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
-def test_descriptor_net(net, testSet, testRefSet, normalized=True):
+def test_descriptor_net(net, testSet, testRefSet, kth=1, normalized=True):
     d, o = get_device_and_size(net, max(len(testSet), len(testRefSet)))
     test_embeddings = get_embeddings(net, testSet, d, o)
     ref_embeddings = get_embeddings(net, testRefSet, d, o)
@@ -107,7 +107,10 @@ def test_descriptor_net(net, testSet, testRefSet, normalized=True):
     # calculate all similarities as a simple matrix multiplication
     # since inputs are normalized, thus cosine = dot product
     sim = torch.mm(test_embeddings, ref_embeddings.t())
-    maxSim, maxIdx = torch.max(sim, 1)
+    if kth <= 1:
+        maxSim, maxIdx = sim.max(1)
+    else:
+        maxSim, maxIdx = sim.kthvalue(kth, 1)
     maxLabel = []
     for i in range(sim.size(0)):
         # get label from ref set which obtained highest score
@@ -151,9 +154,10 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
     print_stats('TEST - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(testSet))
     torch.save(net, path.join(P.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
-    # training set accuracy
+    # training set accuracy (choose second highest value,
+    # as highest should almost certainly be the same image)
     trainTestSet = testRefSet[:200]
-    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, trainTestSet, testRefSet)
+    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, trainTestSet, testRefSet, kth=2)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
     print_stats('TRAIN - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(trainTestSet))
