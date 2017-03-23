@@ -124,7 +124,7 @@ class TestParams(object):
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = True
+        self.siam_test_upfront = False
         self.siam_train = True
         self.siam_feature_dim = 4096
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
@@ -148,7 +148,7 @@ class TestParams(object):
         # 'semi-hard': semi-hard triplets for all positives
         # 'easy-hard': easiest positives with hardest negatives
         self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'semi-hard'
+        self.siam_choice_mode = 'easy-hard'
 
         # general train params
         self.siam_train_trans = self.siam_test_trans
@@ -173,7 +173,7 @@ class TestParams(object):
         # params for semi-hard mode
         # number of epochs after which we
         # take only the hardest examples:
-        self.siam_triplets_switch = 10
+        self.siam_sh_epoch_switch = 10
 
         # params for easy-hard choice mode
         # n_p: number of easy positives for each image
@@ -182,9 +182,10 @@ class TestParams(object):
         # Note that if less than n_p positives or n_n negatives exist,
         # we clamp the value to the number of positives/negatives resp.
         # Thus, we must have n_t <= n_p and n_t <= n_n
-        self.siam_easy_hard_n_p = 25
-        self.siam_easy_hard_n_n = 100
-        self.siam_easy_hard_n_t = 25
+        self.siam_eh_n_p = 3
+        self.siam_eh_n_n = 100
+        self.siam_eh_n_t = 3
+        self.siam_eh_req_triplets = self.siam_train_batch_size * 64
 
     def unique_str(self):
         return self.uuid.strftime('%Y%m%d-%H%M%S-%f')

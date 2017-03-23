@@ -106,11 +106,13 @@ def test_descriptor_net(net, testSet, testRefSet, kth=1, normalized=True):
 
     # calculate all similarities as a simple matrix multiplication
     # since inputs are normalized, thus cosine = dot product
-    sim = torch.mm(test_embeddings, ref_embeddings.t())
+    # the similarities here should always be on CPU
+    # (kthvalue is only implemented there and we don't need GPU perf)
+    sim = torch.mm(test_embeddings, ref_embeddings.t()).cpu()
     if kth <= 1:
         maxSim, maxIdx = sim.max(1)
     else:
-        maxSim, maxIdx = sim.kthvalue(kth, 1)
+        maxSim, maxIdx = sim.kthvalue(sim.size(1) - kth + 1, 1)
     maxLabel = []
     for i in range(sim.size(0)):
         # get label from ref set which obtained highest score
@@ -156,7 +158,10 @@ def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
 
     # training set accuracy (choose second highest value,
     # as highest should almost certainly be the same image)
-    trainTestSet = testRefSet[:200]
+    # choose train samples with at least 2 other images for the query
+    couples = get_pos_couples(testRefSet)
+    trainTestSet = random.sample(testRefSet, 200)
+    trainTestSet = filter(lambda x: len(couples[x[1]]) >= 3, trainTestSet)
     correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, trainTestSet, testRefSet, kth=2)
     num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
     num_neg = len(trainTestSet) * len(testRefSet) - num_pos
@@ -216,7 +221,8 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         loss = criterion(out1, out2, Variable(train_labels))
         loss_micro = loss * n / mini_batch_size
         loss_micro.backward()
-        return prev_loss + loss.data[0], mini_batch_size
+        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
+        return prev_loss + val, mini_batch_size
 
     def train_couples(last, i, is_final, batch):
         batchCount, score, running_loss = last
@@ -254,10 +260,6 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])
 
-    n_triplets = len(trainSet)
-    if P.siam_choice_mode == 'easy-hard':
-        n_triplets *= P.siam_easy_hard_n_t
-    P.log('#triplets:{0}'.format(n_triplets))
     sim_device, out_size = get_device_and_size(net, len(trainSet), sim_matrix=True)
     lab_indicators = get_lab_indicators(trainSet, sim_device)
     pos_couples = get_pos_couples_ibi(trainSet)
@@ -265,8 +267,6 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     def micro_batch(last, i, is_final, batch):
         prev_loss, mini_batch_size = last
         n = len(batch)
-        if P.siam_choice_mode == 'easy-hard':
-            n *= P.siam_easy_hard_n_t
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_in3 = tensor(P.cuda_device, n, C, H, W)
@@ -279,7 +279,8 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
         loss = criterion(out1, out2, out3)
         loss_micro = loss * n / mini_batch_size
         loss_micro.backward()
-        return prev_loss + loss.data[0], mini_batch_size
+        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
+        return prev_loss + val, mini_batch_size
 
     def train_batch(last, i, is_final, batch):
         batchCount, score, running_loss = last
@@ -300,24 +301,26 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     def triplets_easy_hard(similarities, embeddings):
         triplets = []
         for i_im, (im, lab) in enumerate(trainSet):
-            # TODO this doesn't work at all, assuming there is some issue
             ind_pos = lab_indicators[lab]
             ind_neg = t_not(ind_pos)
-            n_n = int(min(P.siam_easy_hard_n_n, ind_neg.sum()))
-            n_p = int(min(P.siam_easy_hard_n_p, ind_pos.sum()))
-
+            # to avoid duplicates pos pairs, consider all images
+            # before this one as pos and neg, to exclude them from all
+            n_p = int(min(P.siam_eh_n_p, ind_pos[i_im:].sum()))
+            n_n = int(min(P.siam_eh_n_n, ind_neg.sum()))
+            if i_im > 0:
+                ind_neg[:i_im] = 1
+            sim_pos = similarities[i_im].clone()
+            sim_pos[ind_neg] = -2
+            _, easy_pos = sim_pos.topk(n_p)
             sim_negs = similarities[i_im].clone()
             # similarity is in [-1, 1]
             sim_negs[ind_pos] = -2
             _, hard_negs = sim_negs.topk(n_n)
 
-            sim_pos = similarities[i_im].clone()
-            sim_pos[ind_neg] = -2
-            _, easy_pos = sim_pos.topk(n_p)
             # get the loss values and keep the highest n_t ones
             # we calculate loss as x_a (x_n - x_p) for each triplet
             # since they are normalized and we can ignore margin here
-            n_t = P.siam_easy_hard_n_t
+            n_t = min(P.siam_eh_n_t, n_p, n_n)
             # get negative and positive embeddings as matrix
             neg_embs = embeddings[hard_negs]
             pos_embs = embeddings[easy_pos]
@@ -332,10 +335,13 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             for k, idx in enumerate(top_idx):
                 i_neg, i_pos = idx % n_n, idx // n_n
                 triplets.append((im, trainSet[i_pos][0], trainSet[i_neg][0]))
-        return triplets
+        # sample only as many triplets as required
+        if P.siam_eh_req_triplets >= len(triplets):
+            random.shuffle(triplets)
+            return triplets
+        return random.sample(triplets, P.siam_eh_req_triplets)
 
     net.train()
-    triplets = triplets_rand()
     for epoch in range(P.siam_train_epochs):
         optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
         if P.siam_choice_mode == 'easy-hard':
@@ -346,9 +352,12 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             similarities = torch.mm(embeddings, embeddings.t())
             triplets = triplets_easy_hard(similarities, embeddings)
             net.train()
-        random.shuffle(triplets)
+        else:
+            triplets = triplets_rand()
+        if epoch <= 0:
+            P.log('#triplets:{0}'.format(len(triplets)))
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_batch, init, triplets[:min(len(trainSet), P.siam_train_batch_size * 64)], P.siam_train_batch_size, cut_end=True)
+        _, bestScore, _ = fold_batches(train_batch, init, triplets, P.siam_train_batch_size, cut_end=True)
 
 
 # train using triplets, constructing triplets from all positive couples
@@ -393,7 +402,7 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
                 # collapsing the model at beginning of training
                 ind_exl = lab_indicators[lab]
                 sim_pos = similarities[i1, i2]
-                if epoch < P.siam_triplets_switch:
+                if epoch < P.siam_sh_epoch_switch:
                     # exclude all positives as well as any that are
                     # more similar than sim_pos
                     ind_exl = ind_exl | similarities[i1].ge(sim_pos)
