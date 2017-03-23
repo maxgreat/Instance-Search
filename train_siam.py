@@ -234,7 +234,7 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
         lab_indicators = get_lab_indicators(trainSet, sim_device)
     net.train()
     for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
         random.shuffle(idxTrainSet)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
         _, bestScore, _ = fold_batches(train_couples, init, idxTrainSet, P.siam_train_batch_size, cut_end=True)
@@ -333,7 +333,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
     net.train()
     triplets = triplets_rand()
     for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
         if P.siam_choice_mode == 'easy-hard':
             # in each epoch, update embeddings/similarities
             # get the values from the test-train set
@@ -344,7 +344,7 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             net.train()
         random.shuffle(triplets)
         init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_batch, init, triplets, P.siam_train_batch_size, cut_end=True)
+        _, bestScore, _ = fold_batches(train_batch, init, triplets[:min(len(trainSet), P.siam_train_batch_size * 64)], P.siam_train_batch_size, cut_end=True)
 
 
 # train using triplets, constructing triplets from all positive couples
@@ -457,7 +457,7 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
     lab_indicators = get_lab_indicators(trainSet, sim_device)
     net.train()
     for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.classif_annealing)
+        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
         # use the test-train set to obtain embeddings and similarities
         # (since it may be transformed differently than train set)
         similarities, sim_device = get_similarities(net, testset_tuple[1])
