@@ -20,19 +20,26 @@ def match_video(x):
     return x.split('/')[-1].split('-')[0]
 
 
-feature_sizes = {
-    models.alexnet: (6, 6),
-    models.resnet152: (7, 7)
+image_sizes = {
+    'CLICIDE_max_224sq': (3, 224, 224),
+    'CLICIDE_video_227sq': (3, 227, 227),
+    'fourviere_clean2_224sq': (3, 224, 224)
 }
 
+feature_sizes = {
+    (models.alexnet, (3, 224, 224)): (6, 6),
+    (models.resnet152, (3, 224, 224)): (7, 7),
+    (models.resnet152, (3, 227, 227)): (8, 8)
+}
 
 mean_std_files = {
+    'CLICIDE_video_227sq': 'data/cli.txt',
     'CLICIDE_max_224sq': 'data/CLICIDE_224sq_train_ms.txt',
     'fourviere_clean2_224sq': 'data/fourviere_224sq_train_ms.txt'
 }
 
-
 match_image = {
+    'CLICIDE_video_227sq': match_video,
     'CLICIDE_max_224sq': match_video,
     'fourviere_clean2_224sq': match_fou_clean2
 }
@@ -60,17 +67,17 @@ class TestParams(object):
 
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
+        self.cnn_model = models.resnet152
+        self.cuda_device = 1
+        self.save_dir = 'data'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.dataset_id = self.dataset_full.split('/')[-1]
         self.mean_std_file = mean_std_files[self.dataset_id]
         self.dataset_match_img = match_image[self.dataset_id]
+        self.image_input_size = image_sizes[self.dataset_id]
         self.finetuning = True
-        self.cnn_model = models.alexnet
-        self.feature_size2d = feature_sizes[self.cnn_model]
-        self.image_input_size = (3, 224, 224)
-        self.save_dir = 'data'
+        self.feature_size2d = feature_sizes[(self.cnn_model, self.image_input_size)]
         self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
-        self.cuda_device = 1
         self.test_norm_per_image = False
         # the maximal allowed size in bytes for embeddings on CUDA
         # if the embeddings take more space, move them to CPU
@@ -144,16 +151,16 @@ class TestParams(object):
         self.siam_choice_mode = 'semi-hard'
 
         # general train params
-        self.siam_train_trans = transforms.Compose([transforms.Scale(300), transforms.RandomCrop(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
-        self.siam_train_pre_proc = False
+        self.siam_train_trans = self.siam_test_trans
+        self.siam_train_pre_proc = True
         self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 16
+        self.siam_train_micro_batch = 32
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
         self.siam_optim = 'SGD'
         self.siam_annealing = {}
-        self.siam_train_epochs = 100
+        self.siam_train_epochs = 10
         self.siam_loss_int = 10
         self.siam_test_int = 0
 
