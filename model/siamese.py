@@ -82,7 +82,7 @@ class TuneClassif(nn.Module):
         super(TuneClassif, self).__init__()
         self.features, self.feature_reduc, self.classifier = extract_layers(net)
         if untrained_blocks < 0:
-            untrained_blocks = sum(1 for _ in features) + sum(1 for _ in classifier)
+            untrained_blocks = sum(1 for _ in self.features) + sum(1 for _ in self.classifier)
         # make sure we never retrain the first few layers
         # this is usually not needed
         seqs = [self.features, self.feature_reduc, self.classifier]
@@ -114,18 +114,15 @@ class Siamese1(nn.Module):
     """
         Define a siamese network
         Given a module, it will duplicate it with weight sharing, concatenate the output and add a linear classifier
+        TODO description, feature reduc (resnet was trained for this avgpool)
     """
-    def __init__(self, net, num_classes=100, feature_dim=100, feature_size2d=(6, 6)):
+    def __init__(self, net, feature_dim=100, feature_size2d=(6, 6)):
         super(Siamese1, self).__init__()
-        self.features, _, _ = extract_layers(net)
-        spatial_factor = 1
-        self.spatial_feature_reduc = nn.Sequential(
-            nn.AvgPool2d(spatial_factor)
-        )
-        factor = feature_size2d[0] * feature_size2d[1] / (spatial_factor * spatial_factor)
+        self.features, _, classifier = extract_layers(net)
+        factor = feature_size2d[0] * feature_size2d[1]
         in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
-            self.feature_size = get_feature_size(net.classifier)
+            self.feature_size = get_feature_size(classifier)
         else:
             self.feature_size = feature_dim
         self.feature_reduc1 = nn.Sequential(
@@ -137,7 +134,6 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
-        x = self.spatial_feature_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc1(x)
         x = self.feature_reduc2(x)
