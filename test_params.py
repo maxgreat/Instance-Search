@@ -68,7 +68,7 @@ class TestParams(object):
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
         self.cnn_model = models.resnet152
-        self.cuda_device = 1
+        self.cuda_device = 0
         self.save_dir = 'data'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.dataset_id = self.dataset_full.split('/')[-1]
@@ -118,15 +118,18 @@ class TestParams(object):
         self.classif_test_int = 0
 
         # settings for feature net constructed from classification net
-        self.feature_net_average = False
-        self.feature_net_classify = False
         self.feature_net_upfront = False
+        self.feature_net_use_class_net = False
+        self.feature_net_average = False
+        self.feature_net_classify = True
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = False
+        self.siam_test_upfront = True
+        self.siam_use_feature_net = False
         self.siam_train = True
-        self.siam_feature_dim = 4096
+        # TODO should this always be the number of instances ?
+        self.siam_feature_dim = 464
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
         self.siam_test_batch_size = 32
@@ -148,13 +151,13 @@ class TestParams(object):
         # 'semi-hard': semi-hard triplets for all positives
         # 'easy-hard': easiest positives with hardest negatives
         self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'easy-hard'
+        self.siam_choice_mode = 'semi-hard'
 
         # general train params
-        self.siam_train_trans = self.siam_test_trans
-        self.siam_train_pre_proc = True
-        self.siam_train_batch_size = 256
-        self.siam_train_micro_batch = 32
+        self.siam_train_trans = self.classif_train_trans
+        self.siam_train_pre_proc = False
+        self.siam_train_batch_size = 128
+        self.siam_train_micro_batch = 8
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
@@ -192,8 +195,15 @@ class TestParams(object):
 
     def save(self, f, prefix):
         f.write('{0}\n'.format(prefix))
+        first = ['dataset_full', 'cnn_model', 'classif_train', 'classif_preload_net', 'feature_net_upfront', 'siam_train', 'siam_preload_net']
+        for name in first:
+            value = getattr(self, name)
+            if name == 'cnn_model':
+                value = fun_str(value)
+            f.write('{0}:{1}\n'.format(name, value))
+        f.write('\n')
         for name, value in sorted(vars(self).items()):
-            if name == 'uuid':
+            if name == 'uuid' or name in first:
                 continue
             if name in ('classif_test_trans', 'classif_train_trans', 'siam_test_trans', 'siam_train_trans'):
                 value = trans_str(value)
