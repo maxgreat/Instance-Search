@@ -27,9 +27,34 @@ def get_class_net(labels):
     return net
 
 
+def get_feature_net(class_net):
+    if P.feature_net_use_class_net:
+        net = FeatureNet(class_net, P.feature_size2d, P.feature_net_average, P.feature_net_classify)
+    else:
+        net = FeatureNet(P.cnn_model(pretrained=P.finetuning), P.feature_size2d, P.feature_net_average, P.feature_net_classify)
+    if P.cuda_device >= 0:
+        net.cuda()
+    else:
+        net.cpu()
+    return net
+
+
+def get_siamese_net(feature_net):
+    if P.siam_preload_net:
+        net = torch.load(P.siam_preload_net)
+    elif P.siam_use_feature_net:
+        net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d)
+    else:
+        net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d)
+    if P.cuda_device >= 0:
+        net.cuda()
+    else:
+        net.cpu()
+    return net
+
+
 def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
     class_net = get_class_net(labels)
-    # class_net = torch.load(path.join(P.save_dir, 'best_classif_1.ckpt')).cuda()
 
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
     criterion = nn.CrossEntropyLoss()
@@ -47,15 +72,8 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
     return class_net
 
 
-def siam(class_net, testSetSiam, testTrainSetSiam, trainSetSiam):
-    if P.siam_preload_net:
-        net = torch.load(P.siam_preload_net)
-    else:
-        net = Siamese1(class_net, feature_dim=P.siam_feature_dim, feature_size2d=P.feature_size2d)
-    if P.cuda_device >= 0:
-        net.cuda()
-    else:
-        net.cpu()
+def siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam):
+    net = get_siamese_net(feature_net)
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
     # criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
@@ -119,7 +137,7 @@ def main():
     testSetClassif, testSetSiam = trans_dataset(testSetFull, test_pre_procs, test_trans, test_filters)
 
     class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
-    feature_net = FeatureNet(class_net, P.feature_size2d, P.feature_net_average, P.feature_net_classify)
+    feature_net = get_feature_net(class_net)
     if P.feature_net_upfront:
         P.log('Upfront testing of class/feature net as global descriptor')
         test_print_siamese(feature_net, (testSetSiam, testTrainSetSiam))
