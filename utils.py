@@ -2,6 +2,7 @@
 
 import torch
 import torch.optim as optim
+from torch.autograd import Variable
 import torchvision.transforms as transforms
 import types
 import random
@@ -122,6 +123,7 @@ def t_not_(t):
     return t.eq_(0)
 
 
+# --------------------- General training ------------------------
 # evaluate a function by batches of size batch_size on the set x
 # and fold over the returned values
 def fold_batches(f, init, x, batch_size, cut_end=False):
@@ -146,6 +148,61 @@ def anneal(net, optimizer, epoch, annealing_dict):
     momentum = default_group['momentum']
     weight_decay = default_group['weight_decay']
     return optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
+
+
+def train_gen(net, train_set, test_set, criterion, optimizer, params, is_classif, create_epoch, create_batch, output_stats, criterion2=None, loss2_choice=lambda outputs, labels: [outputs[0]], best_score=0):
+
+    # do not use double objectives by default
+    loss2_alpha, loss2_avg = None, None
+    if is_classif:
+        n_epochs = params.classif_train_epochs
+        annealing_dict = params.classif_annealing
+        mini_size = params.classif_train_batch_size
+        micro_size = params.classif_train_micro_batch
+        loss_avg = params.classif_loss_avg
+    else:
+        n_epochs = params.siam_train_epochs
+        annealing_dict = params.siam_annealing
+        mini_size = params.siam_train_batch_size
+        micro_size = params.siam_train_micro_batch
+        loss_avg = params.siam_loss_avg
+        if criterion2:
+            loss2_alpha = params.siam_do_loss2_alpha
+            loss2_avg = params.siam_do_loss2_avg
+
+    def micro_batch_gen(last, i, is_final, batch):
+        prev_loss, mini_batch_size = last
+        n = len(batch)
+        tensors_in, labels_in = create_batch(batch, n, **batch_args)
+        tensors_out = net(*(Variable(t) for t in tensors_in))
+        loss = criterion(*(tensors_out + [Variable(l) for l in labels_in]))
+        loss_micro = loss * n / mini_batch_size
+        val = loss_micro.data[0] if loss_avg else loss.data[0]
+        if criterion2:
+            loss2 = criterion2(*loss2_choice(tensors_out, (Variable(l) for l in labels_in)))
+            loss_micro2 = loss2 * n / mini_batch_size
+            loss_micro = loss_micro + loss2_alpha * loss_micro2
+            val += loss2_alpha * (loss_micro2.data[0] if loss2_avg else loss2.data[0])
+        loss_micro.backward()
+        return prev_loss + val, mini_batch_size
+
+    def mini_batch_gen(last, i, is_final, batch):
+        batch_count, score, running_loss = last
+        optimizer.zero_grad()
+        loss, _ = fold_batches(micro_batch_gen, (0.0, len(batch)), batch, micro_size)
+        optimizer.step()
+        running_loss, score = output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score)
+        return batch_count + 1, score, running_loss
+
+    net.train()
+    for epoch in range(n_epochs):
+        # annealing
+        optimizer = anneal(net, optimizer, epoch, annealing_dict)
+
+        dataset, batch_args = create_epoch(epoch, train_set, test_set)
+
+        init = 0, best_score, 0.0  # batch count, score, running loss
+        _, best_score, _ = fold_batches(mini_batch_gen, init, dataset, mini_size, cut_end=True)
 
 
 # ----------------------- Unused ---------------------------------

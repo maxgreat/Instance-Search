@@ -53,12 +53,12 @@ def get_siamese_net(feature_net):
     return net
 
 
-def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
+def classif(labels, classif_test_train_set, classif_test_set, classif_train_set):
     class_net = get_class_net(labels)
 
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
-    criterion = nn.CrossEntropyLoss()
-    testset_tuple = (testTrainSetClassif, testSetClassif)
+    criterion = nn.CrossEntropyLoss(size_average=P.classif_loss_avg)
+    testset_tuple = (classif_test_train_set, classif_test_set)
     if P.classif_test_upfront:
         P.log('Upfront testing of classification model')
         score = test_print_classif(class_net, testset_tuple, labels)
@@ -67,12 +67,12 @@ def classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif):
     if P.classif_train:
         P.log('Starting classification training')
         # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-        train_classif(class_net, trainSetClassif, testset_tuple, labels, criterion, optimizer, bestScore=score)
+        train_classif(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, bestScore=score)
         P.log('Finished classification training')
     return class_net
 
 
-def siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam):
+def siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set):
     net = get_siamese_net(feature_net)
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
@@ -81,7 +81,7 @@ def siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam):
         criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
     else:
         criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
-    testset_tuple = (testSetSiam, testTrainSetSiam)
+    testset_tuple = (siam_test_set, siam_test_train_set)
     if P.siam_test_upfront:
         P.log('Upfront testing of Siamese net')
         score = test_print_siamese(net, testset_tuple)
@@ -95,20 +95,20 @@ def siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam):
         f = train_siam_triplets_pos_couples
     if P.siam_train:
         P.log('Starting descriptor training')
-        f(net, trainSetSiam, testset_tuple, criterion, optimizer, bestScore=score)
+        f(net, siam_train_set, testset_tuple, criterion, optimizer, bestScore=score)
         P.log('Finished descriptor training')
 
 
 def main():
     # training and test sets (scaled to 300 on the small side)
-    trainSetFull = ReadImages.readImageswithPattern(
+    train_set_full = ReadImages.readImageswithPattern(
         P.dataset_full, P.dataset_match_img)
-    testSetFull = ReadImages.readImageswithPattern(
+    test_set_full = ReadImages.readImageswithPattern(
         P.dataset_full + '/test', P.dataset_match_img)
 
     # define the labels list
-    listLabel = [t[1] for t in trainSetFull if 'wall' not in t[1]]
-    labels = list(set(listLabel))  # we have to give a number for each label
+    labels_list = [t[1] for t in train_set_full if 'wall' not in t[1]]
+    labels = list(set(labels_list))  # we have to give a number for each label
 
     P.log('Loading and transforming train/test sets.')
 
@@ -129,19 +129,19 @@ def main():
     train_pre_procs = [P.classif_train_pre_proc, P.classif_test_pre_proc, P.siam_train_pre_proc, P.siam_test_pre_proc]
     train_trans = [P.classif_train_trans, P.classif_test_trans, P.siam_train_trans, P.siam_test_trans]
 
-    trainSetClassif, testTrainSetClassif, trainSetSiam, testTrainSetSiam = trans_dataset(trainSetFull, train_pre_procs, train_trans)
+    classif_train_set, classif_test_train_set, siam_train_set, siam_test_train_set = trans_dataset(train_set_full, train_pre_procs, train_trans)
 
     test_pre_procs = [P.classif_test_pre_proc, P.siam_test_pre_proc]
     test_trans = [P.classif_test_trans, P.siam_test_trans]
     test_filters = [lambda im, lab: lab in labels for _ in test_trans]
-    testSetClassif, testSetSiam = trans_dataset(testSetFull, test_pre_procs, test_trans, test_filters)
+    classif_test_set, siam_test_set = trans_dataset(test_set_full, test_pre_procs, test_trans, test_filters)
 
-    class_net = classif(labels, testTrainSetClassif, testSetClassif, trainSetClassif)
+    class_net = classif(labels, classif_test_train_set, classif_test_set, classif_train_set)
     feature_net = get_feature_net(class_net)
     if P.feature_net_upfront:
         P.log('Upfront testing of class/feature net as global descriptor')
-        test_print_siamese(feature_net, (testSetSiam, testTrainSetSiam))
-    siam(feature_net, testSetSiam, testTrainSetSiam, trainSetSiam)
+        test_print_siamese(feature_net, (siam_test_set, siam_test_train_set))
+    siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set)
 
 
 if __name__ == '__main__':

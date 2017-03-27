@@ -26,7 +26,6 @@ def get_device_and_size(net, n, sim_matrix=False):
     if hasattr(net, 'feature_size'):
         out_size = net.feature_size
     if n * out_size * 4 > P.embeddings_cuda_size:
-        # we will consume more than 1 GB here. use CPU
         device = -1
     if sim_matrix and n * n * 4 > P.embeddings_cuda_size:
         device = -1
@@ -71,10 +70,10 @@ def get_similarities(net, dataset):
 
 
 # return a random negative for the given label and train set
-def choose_rand_neg(trainSet, lab):
-    im_neg, lab_neg = random.choice(trainSet)
+def choose_rand_neg(train_set, lab):
+    im_neg, lab_neg = random.choice(train_set)
     while (lab_neg == lab):
-        im_neg, lab_neg = random.choice(trainSet)
+        im_neg, lab_neg = random.choice(train_set)
     return im_neg
 
 
@@ -96,10 +95,10 @@ def get_lab_indicators(dataset, device):
 # accuracy of a net giving feature vectors for each image, evaluated over test set and test ref set (where the images are searched for)
 # the model should be in eval mode
 # for each pair of images, this only considers the maximal similarity (precision at 1, not the average precision/ranking on the ref set). TODO
-def test_descriptor_net(net, testSet, testRefSet, kth=1, normalized=True):
-    d, o = get_device_and_size(net, max(len(testSet), len(testRefSet)))
-    test_embeddings = get_embeddings(net, testSet, d, o)
-    ref_embeddings = get_embeddings(net, testRefSet, d, o)
+def test_descriptor_net(net, test_set, test_ref_set, kth=1, normalized=True):
+    d, o = get_device_and_size(net, max(len(test_set), len(test_ref_set)))
+    test_embeddings = get_embeddings(net, test_set, d, o)
+    ref_embeddings = get_embeddings(net, test_ref_set, d, o)
     if not normalized:
         test_embeddings = NormalizeL2Fun()(test_embeddings)
         ref_embeddings = NormalizeL2Fun()(ref_embeddings)
@@ -110,89 +109,100 @@ def test_descriptor_net(net, testSet, testRefSet, kth=1, normalized=True):
     # (kthvalue is only implemented there and we don't need GPU perf)
     sim = torch.mm(test_embeddings, ref_embeddings.t()).cpu()
     if kth <= 1:
-        maxSim, maxIdx = sim.max(1)
+        max_sim, max_idx = sim.max(1)
     else:
-        maxSim, maxIdx = sim.kthvalue(sim.size(1) - kth + 1, 1)
-    maxLabel = []
+        max_sim, max_idx = sim.kthvalue(sim.size(1) - kth + 1, 1)
+    max_label = []
     for i in range(sim.size(0)):
         # get label from ref set which obtained highest score
-        maxLabel.append(testRefSet[maxIdx[i, 0]][1])
+        max_label.append(test_ref_set[max_idx[i, 0]][1])
 
     # stats
-    correct = sum(testLabel == maxLabel[j] for j, (_, testLabel) in enumerate(testSet))
-    total = len(testSet)
-    sum_pos = sum(sim[i, j] for i, (_, testLabel) in enumerate(testSet) for j, (_, refLabel) in enumerate(testRefSet) if testLabel == refLabel)
+    correct = sum(test_label == max_label[j] for j, (_, test_label) in enumerate(test_set))
+    total = len(test_set)
+    sum_pos = sum(sim[i, j] for i, (_, test_label) in enumerate(test_set) for j, (_, ref_label) in enumerate(test_ref_set) if test_label == ref_label)
     sum_neg = sim.sum() - sum_pos
-    sum_max = maxSim.sum()
-    lab_dict = dict([(lab, {}) for _, lab in testSet])
-    for j, (_, lab) in enumerate(testSet):
+    sum_max = max_sim.sum()
+    lab_dict = dict([(lab, {}) for _, lab in test_set])
+    for j, (_, lab) in enumerate(test_set):
         d = lab_dict[lab]
-        lab = maxLabel[j]
+        lab = max_label[j]
         d.setdefault(lab, d.get(lab, 0) + 1)
     return correct, total, sum_pos, sum_neg, sum_max, lab_dict
 
 
-def test_print_siamese(net, testset_tuple, bestScore=0, epoch=0):
+def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
     def print_stats(prefix, c, t, avg_pos, avg_neg, avg_max):
         s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\n'.format(c, t, float(c) / t)
         s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
         P.log(prefix + s1 + s2)
 
-    testSet, testRefSet = testset_tuple
+    test_set, test_ref_set = testset_tuple
     net.eval()
-    correct, tot, sum_pos, sum_neg, sum_max, lab_dict = test_descriptor_net(net, testSet, testRefSet)
+    correct, tot, sum_pos, sum_neg, sum_max, lab_dict = test_descriptor_net(net, test_set, test_ref_set)
     # can save labels dictionary (predicted labels for all test labels)
     # TODO
 
-    num_pos = sum(testLabel == refLabel for _, testLabel in testSet for _, refLabel in testRefSet)
-    num_neg = len(testSet) * len(testRefSet) - num_pos
+    num_pos = sum(test_label == ref_label for _, test_label in test_set for _, ref_label in test_ref_set)
+    num_neg = len(test_set) * len(test_ref_set) - num_pos
 
-    if (correct > bestScore):
-        bestScore = correct
+    if (correct > best_score):
+        best_score = correct
         prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
         P.save_uuid(prefix)
         torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_siam.ckpt"))
-    print_stats('TEST - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(testSet))
+    print_stats('TEST - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(test_set))
     torch.save(net, path.join(P.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
     # training set accuracy (choose second highest value,
     # as highest should almost certainly be the same image)
     # choose train samples with at least 2 other images for the query
-    couples = get_pos_couples(testRefSet)
-    trainTestSet = random.sample(testRefSet, 200)
-    trainTestSet = filter(lambda x: len(couples[x[1]]) >= 3, trainTestSet)
-    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, trainTestSet, testRefSet, kth=2)
-    num_pos = sum(testLabel == refLabel for _, testLabel in trainTestSet for _, refLabel in testRefSet)
-    num_neg = len(trainTestSet) * len(testRefSet) - num_pos
-    print_stats('TRAIN - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(trainTestSet))
+    couples = get_pos_couples(test_ref_set)
+    train_test_set = random.sample(test_ref_set, 200)
+    train_test_set = filter(lambda x: len(couples[x[1]]) >= 3, train_test_set)
+    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, train_test_set, test_ref_set, kth=2)
+    num_pos = sum(test_label == ref_label for _, test_label in train_test_set for _, ref_label in test_ref_set)
+    num_neg = len(train_test_set) * len(test_ref_set) - num_pos
+    print_stats('TRAIN - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(train_test_set))
     net.train()
-    return bestScore
+    return best_score
 
 
-def siam_train_stats(net, testset_tuple, epoch, batchCount, is_last, loss, running_loss, score):
+def siam_train_stats(net, testset_tuple, epoch, batch_count, is_last, loss, running_loss, score):
     disp_int = P.siam_loss_int
     test_int = P.siam_test_int
     running_loss += loss
-    if batchCount % disp_int == disp_int - 1:
-        P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batchCount + 1, running_loss / disp_int))
+    if batch_count % disp_int == disp_int - 1:
+        P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batch_count + 1, running_loss / disp_int))
         running_loss = 0.0
     # test model every x mini-batches
-    if ((test_int > 0 and batchCount % test_int == test_int - 1) or
+    if ((test_int > 0 and batch_count % test_int == test_int - 1) or
             (test_int <= 0 and is_last)):
         score = test_print_siamese(net, testset_tuple, score, epoch + 1)
     return running_loss, score
 
 
-def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+def train_siam_couples(net, train_set, testset_tuple, criterion, optimizer, best_score=0):
     C, H, W = P.image_input_size
     trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         trans = transforms.Compose([])
 
-    def micro_batch(last, i, is_final, batch):
-        prev_loss, mini_batch_size = last
-        n = len(batch)
+    couples = get_pos_couples_ibi(train_set)
+    num_pos = sum(len(couples[im]) for im in couples)
+    P.log('#pos (with order, with duplicates):{0}'.format(num_pos))
+    idx_train_set = list(enumerate(train_set))
+    sim_device, _ = get_device_and_size(net, len(train_set), sim_matrix=True)
+    lab_indicators = get_lab_indicators(train_set, sim_device)
+
+    def create_epoch(epoch, idx_train_set, testset_tuple):
+        test_set, test_ref_set = testset_tuple
+        similarities, _ = get_similarities(net, test_ref_set)
+        random.shuffle(idx_train_set)
+        return idx_train_set, {'similarities': similarities}
+
+    def create_batch(batch, n, similarities):
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_labels = tensor(P.cuda_device, n)
@@ -207,100 +217,43 @@ def train_siam_couples(net, trainSet, testset_tuple, criterion, optimizer, bestS
                     # similarity is in [-1, 1]
                     neg_sims[lab_indicators[lab]] = -2
                     _, k = neg_sims.max(0)
-                    im2 = trainSet[k[0]][0]
+                    im2 = train_set[k[0]][0]
                 else:
                     # choose random negative for this label
-                    im2 = choose_rand_neg(trainSet, lab)
+                    im2 = choose_rand_neg(train_set, lab)
                 train_in2[j] = trans(im2)
                 train_labels[j] = -1
             else:
                 # choose any positive randomly
                 train_in2[j] = trans(random.choice(couples[im1]))
                 train_labels[j] = 1
-        out1, out2 = net(Variable(train_in1), Variable(train_in2))
-        loss = criterion(out1, out2, Variable(train_labels))
-        loss_micro = loss * n / mini_batch_size
-        loss_micro.backward()
-        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
-        return prev_loss + val, mini_batch_size
+        return [train_in1, train_in2], [train_labels]
 
-    def train_couples(last, i, is_final, batch):
-        batchCount, score, running_loss = last
-
-        # zero the parameter gradients, then forward + back prop
-        optimizer.zero_grad()
-        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
-        optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
-        return batchCount + 1, score, running_loss
-
-    couples = get_pos_couples_ibi(trainSet)
-    num_pos = sum(len(couples[im]) for im in couples)
-    P.log('#pos (with order, with duplicates):{0}'.format(num_pos))
-    idxTrainSet = list(enumerate(trainSet))
-    if P.siam_choice_mode == 'hard':
-        # get all similarities between embeddings on the test train set
-        similarities, sim_device = get_similarities(net, testset_tuple[1])
-        lab_indicators = get_lab_indicators(trainSet, sim_device)
-    net.train()
-    for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
-        random.shuffle(idxTrainSet)
-        init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_couples, init, idxTrainSet, P.siam_train_batch_size, cut_end=True)
-        if P.siam_choice_mode == 'hard':
-            # update similarities
-            similarities, _ = get_similarities(net, testset_tuple[1])
+    train_gen(net, idx_train_set, testset_tuple, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)
 
 
 # train using triplets generated each epoch
-def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+def train_siam_triplets(net, train_set, testset_tuple, criterion, optimizer, best_score=0):
     C, H, W = P.image_input_size
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])
 
-    sim_device, out_size = get_device_and_size(net, len(trainSet), sim_matrix=True)
-    lab_indicators = get_lab_indicators(trainSet, sim_device)
-    pos_couples = get_pos_couples_ibi(trainSet)
-
-    def micro_batch(last, i, is_final, batch):
-        prev_loss, mini_batch_size = last
-        n = len(batch)
-        train_in1 = tensor(P.cuda_device, n, C, H, W)
-        train_in2 = tensor(P.cuda_device, n, C, H, W)
-        train_in3 = tensor(P.cuda_device, n, C, H, W)
-        # we get a batch of triplets
-        for j, (im1, im2, im3) in enumerate(batch):
-            train_in1[j] = train_trans(im1)
-            train_in2[j] = train_trans(im2)
-            train_in3[j] = train_trans(im3)
-        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-        loss = criterion(out1, out2, out3)
-        loss_micro = loss * n / mini_batch_size
-        loss_micro.backward()
-        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
-        return prev_loss + val, mini_batch_size
-
-    def train_batch(last, i, is_final, batch):
-        batchCount, score, running_loss = last
-        optimizer.zero_grad()
-        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
-        optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
-        return batchCount + 1, score, running_loss
+    sim_device, out_size = get_device_and_size(net, len(train_set), sim_matrix=True)
+    lab_indicators = get_lab_indicators(train_set, sim_device)
+    pos_couples = get_pos_couples_ibi(train_set)
 
     def triplets_rand():
         triplets = []
-        for im, lab in trainSet:
+        for im, lab in train_set:
             im_pos = random.choice(pos_couples[im])
-            im_neg = choose_rand_neg(trainSet, lab)
+            im_neg = choose_rand_neg(train_set, lab)
             triplets.append((im, im_pos, im_neg))
         return triplets
 
-    def triplets_easy_hard(similarities, embeddings):
+    def triplets_easy_hard(train_set, similarities, embeddings):
         triplets = []
-        for i_im, (im, lab) in enumerate(trainSet):
+        for i_im, (im, lab) in enumerate(train_set):
             ind_pos = lab_indicators[lab]
             ind_neg = t_not(ind_pos)
             # to avoid duplicates pos pairs, consider all images
@@ -334,51 +287,92 @@ def train_siam_triplets(net, trainSet, testset_tuple, criterion, optimizer, best
             _, top_idx = loss_values.topk(n_t)
             for k, idx in enumerate(top_idx):
                 i_neg, i_pos = idx % n_n, idx // n_n
-                triplets.append((im, trainSet[i_pos][0], trainSet[i_neg][0]))
+                triplets.append((im, train_set[i_pos][0], train_set[i_neg][0]))
         # sample only as many triplets as required
         if P.siam_eh_req_triplets >= len(triplets):
             random.shuffle(triplets)
             return triplets
         return random.sample(triplets, P.siam_eh_req_triplets)
 
-    net.train()
-    for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
+    def create_epoch(epoch, train_set, test_set):
         if P.siam_choice_mode == 'easy-hard':
-            # in each epoch, update embeddings/similarities
-            # get the values from the test-train set
+            test_set, test_ref_set = test_set
             net.eval()
-            embeddings = get_embeddings(net, testset_tuple[1], sim_device, out_size)
+            embeddings = get_embeddings(net, test_ref_set, sim_device, out_size)
             similarities = torch.mm(embeddings, embeddings.t())
-            triplets = triplets_easy_hard(similarities, embeddings)
+            triplets = triplets_easy_hard(train_set, similarities, embeddings)
             net.train()
         else:
             triplets = triplets_rand()
         if epoch <= 0:
             P.log('#triplets:{0}'.format(len(triplets)))
-        init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_batch, init, triplets, P.siam_train_batch_size, cut_end=True)
+        return triplets, {}
+
+    def create_batch(batch, n):
+        train_in1 = tensor(P.cuda_device, n, C, H, W)
+        train_in2 = tensor(P.cuda_device, n, C, H, W)
+        train_in3 = tensor(P.cuda_device, n, C, H, W)
+        for j, (im1, im2, im3) in enumerate(batch):
+            train_in1[j] = train_trans(im1)
+            train_in2[j] = train_trans(im2)
+            train_in3[j] = train_trans(im3)
+        return [train_in1, train_in2, train_in3], []
+
+    train_gen(net, train_set, test_set, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)
 
 
 # train using triplets, constructing triplets from all positive couples
-def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, optimizer, bestScore=0):
+def train_siam_triplets_pos_couples(net, train_set, testset_tuple, criterion, optimizer, best_score=0, criterion2=None):
     """
-        Train a network
-        inputs :
-            * trainSet
-            * testSet,
-            * transformations to apply to image (for train and for test)
-            * loss function (criterion)
-            * optimizer
+        TODO
     """
     C, H, W = P.image_input_size
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
         train_trans = transforms.Compose([])
 
-    def micro_batch(last, i, is_final, batch):
-        prev_loss, mini_batch_size = last
-        n = len(batch)
+    couples = get_pos_couples(train_set)
+    sim_device, _ = get_device_and_size(net, len(train_set), sim_matrix=True)
+    lab_indicators = get_lab_indicators(train_set, sim_device)
+    num_pos = sum(len(couples[l]) for l in couples)
+    P.log('#pos (without order, with duplicates):{0}'.format(num_pos))
+
+    # fold over positive couples here and choose negative for each pos
+    # need to make sure the couples are evenly distributed
+    # such that all batches can have couples from every instance
+    def shuffle_couples(couples):
+        for l in couples:
+            random.shuffle(couples[l])
+        # get x such that only 20% of labels have more than x couples
+        a = np.array([len(couples[l]) for l in couples])
+        x = int(np.percentile(a, 80))
+        out = []
+        keys = couples.keys()
+        random.shuffle(keys)
+        # append the elements to out in a strided way
+        # (up to x elements per label)
+        for count in range(x):
+            for l in keys:
+                if count >= len(couples[l]):
+                    continue
+                out.append(couples[l][count])
+        # the last elements in the longer lists are inserted at random
+        for l in keys:
+            for i in range(x, len(couples[l])):
+                out.insert(random.randrange(len(out)), couples[l][i])
+        return out
+
+    def create_epoch(epoch, couples, test_set):
+        test_set, test_ref_set = test_set
+        # use the test-train set to obtain embeddings and similarities
+        # (since it may be transformed differently than train set)
+        similarities, _ = get_similarities(net, test_ref_set)
+
+        # shuffle the couples
+        shuffled = shuffle_couples(couples)
+        return shuffled, {'epoch': epoch, 'similarities': similarities}
+
+    def create_batch(batch, n, epoch, similarities):
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_in3 = tensor(P.cuda_device, n, C, H, W)
@@ -393,7 +387,7 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
                 # similarity is in [-1, 1]
                 sims[ind_exl] = -2
                 _, k = sims.max(0)
-                im3 = trainSet[k[0]][0]
+                im3 = train_set[k[0]][0]
             elif P.siam_choice_mode == 'semi-hard':
                 # choose a semi-hard negative. see FaceNet
                 # paper by Schroff et al for details.
@@ -417,67 +411,14 @@ def train_siam_triplets_pos_couples(net, trainSet, testset_tuple, criterion, opt
                     sims = similarities[i1].clone()
                     sims[ind_exl] = -2
                     _, k = sims.max(0)
-                    im3 = trainSet[k[0]][0]
+                    im3 = train_set[k[0]][0]
             if im3 is None:
                 # default to random negative
-                im3 = choose_rand_neg(trainSet, lab)
+                im3 = choose_rand_neg(train_set, lab)
             train_in1[j] = train_trans(im1)
             train_in2[j] = train_trans(im2)
             train_in3[j] = train_trans(im3)
-        out1, out2, out3 = net(Variable(train_in1), Variable(train_in2), Variable(train_in3))
-        loss = criterion(out1, out2, out3)
-        loss_micro = loss * n / mini_batch_size
-        loss_micro.backward()
-        val = loss_micro.data[0] if P.siam_loss_avg else loss.data[0]
-        return prev_loss + val, mini_batch_size
+        # return input tensors, no labels
+        return [train_in1, train_in2, train_in3], []
 
-    def train_triplets(last, i, is_final, batch):
-        batchCount, score, running_loss = last
-
-        optimizer.zero_grad()
-        loss, _ = fold_batches(micro_batch, (0.0, len(batch)), batch, P.siam_train_micro_batch)
-        optimizer.step()
-        running_loss, score = siam_train_stats(net, testset_tuple, epoch, batchCount, is_final, loss, running_loss, score)
-        return batchCount + 1, score, running_loss
-
-    def shuffle_couples(couples):
-        for l in couples:
-            random.shuffle(couples[l])
-        # get x such that only 20% of labels have more than x couples
-        a = np.array([len(couples[l]) for l in couples])
-        x = int(np.percentile(a, 80))
-        out = []
-        keys = couples.keys()
-        random.shuffle(keys)
-        # append the elements to out in a strided way
-        # (up to x elements per label)
-        for count in range(x):
-            for l in keys:
-                if count >= len(couples[l]):
-                    continue
-                out.append(couples[l][count])
-        # the last elements in the longer lists are inserted at random
-        for l in keys:
-            for i in range(x, len(couples[l])):
-                out.insert(random.randrange(len(out)), couples[l][i])
-        return out
-
-    couples = get_pos_couples(trainSet)
-    num_pos = sum(len(couples[l]) for l in couples)
-    P.log('#pos (without order, with duplicates):{0}'.format(num_pos))
-
-    sim_device, _ = get_device_and_size(net, len(trainSet), sim_matrix=True)
-    lab_indicators = get_lab_indicators(trainSet, sim_device)
-    net.train()
-    for epoch in range(P.siam_train_epochs):
-        optimizer = anneal(net, optimizer, epoch, P.siam_annealing)
-        # use the test-train set to obtain embeddings and similarities
-        # (since it may be transformed differently than train set)
-        similarities, sim_device = get_similarities(net, testset_tuple[1])
-
-        # fold over positive couples here and choose negative for each pos
-        # need to make sure the couples are evenly distributed
-        # such that all batches can have couples from every instance
-        shuffled = shuffle_couples(couples)
-        init = 0, bestScore, 0.0  # batchCount, bestScore, running_loss
-        _, bestScore, _ = fold_batches(train_triplets, init, shuffled, P.siam_train_batch_size, cut_end=True)
+    train_gen(net, couples, testset_tuple, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)

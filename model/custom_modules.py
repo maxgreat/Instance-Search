@@ -58,13 +58,13 @@ class NormalizeL2Fun(Function):
 
     def backward(self, grad_output):
         input = self.saved_tensors[0]
-        gradInput = self.norm2.expand_as(input) * grad_output
+        grad_input = self.norm2.expand_as(input) * grad_output
         cross = (input * grad_output).sum(1)
         buf = input * cross.expand_as(input)
-        gradInput.add_(-1, buf)
+        grad_input.add_(-1, buf)
         cross = self.norm2 * self.norm
-        gradInput.div_(cross.expand_as(gradInput))
-        return gradInput
+        grad_input.div_(cross.expand_as(grad_input))
+        return grad_input
 
 
 class NormalizeL2(nn.Module):

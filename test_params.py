@@ -102,6 +102,7 @@ class TestParams(object):
         # Classification net training params
         self.classif_train_epochs = 50
         self.classif_train_batch_size = 32
+        self.classif_train_micro_batch = 0
         self.classif_train_pre_proc = False
         self.classif_train_aug_rot = r = 45
         self.classif_train_aug_hrange = hr = 0.2
@@ -114,6 +115,7 @@ class TestParams(object):
         self.classif_weight_decay = 5e-4
         self.classif_optim = 'SGD'
         self.classif_annealing = {30: 0.1}
+        self.classif_loss_avg = True
         self.classif_loss_int = 10
         self.classif_test_int = 0
 
@@ -132,7 +134,6 @@ class TestParams(object):
         self.siam_feature_dim = 464
         self.siam_conv_average = (1, 1)
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
-        self.siam_loss_avg = False
         self.siam_test_batch_size = 32
         self.siam_test_pre_proc = True
         self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
@@ -165,8 +166,14 @@ class TestParams(object):
         self.siam_optim = 'SGD'
         self.siam_annealing = {}
         self.siam_train_epochs = 10
+        self.siam_loss_avg = False
         self.siam_loss_int = 10
         self.siam_test_int = 0
+
+        # double objective loss params
+        self.siam_double_objective = True
+        self.siam_do_alpha = 0
+        self.siam_do_loss2_avg = True
 
         # couples params
         self.siam_couples_p = 0.8
