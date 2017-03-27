@@ -43,9 +43,9 @@ def get_siamese_net(feature_net):
     if P.siam_preload_net:
         net = torch.load(P.siam_preload_net)
     elif P.siam_use_feature_net:
-        net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d)
+        net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     else:
-        net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d)
+        net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     if P.cuda_device >= 0:
         net.cuda()
     else:

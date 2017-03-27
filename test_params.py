@@ -130,6 +130,7 @@ class TestParams(object):
         self.siam_train = True
         # TODO should this always be the number of instances ?
         self.siam_feature_dim = 464
+        self.siam_conv_average = (1, 1)
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_loss_avg = False
         self.siam_test_batch_size = 32

@@ -116,10 +116,15 @@ class Siamese1(nn.Module):
         Given a module, it will duplicate it with weight sharing, concatenate the output and add a linear classifier
         TODO description, feature reduc (resnet was trained for this avgpool)
     """
-    def __init__(self, net, feature_dim=100, feature_size2d=(6, 6)):
+    def __init__(self, net, feature_dim, feature_size2d, spatial_avg_factor=(1, 1)):
         super(Siamese1, self).__init__()
         self.features, _, classifier = extract_layers(net)
-        factor = feature_size2d[0] * feature_size2d[1]
+        if spatial_avg_factor[0] == -1:
+            spatial_avg_factor[0] = feature_size2d[0]
+        if spatial_avg_factor[1] == -1:
+            spatial_avg_factor[1] = feature_size2d[1]
+        self.spatial_reduc = nn.AvgPool2d(spatial_avg_factor)
+        factor = feature_size2d[0] * feature_size2d[1] / (spatial_avg_factor[0] * spatial_avg_factor[1])
         in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
             self.feature_size = get_feature_size(classifier)
@@ -134,6 +139,7 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
+        x = self.spatial_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc1(x)
         x = self.feature_reduc2(x)
