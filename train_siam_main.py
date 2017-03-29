@@ -67,12 +67,12 @@ def classif(labels, classif_test_train_set, classif_test_set, classif_train_set)
     if P.classif_train:
         P.log('Starting classification training')
         # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-        train_classif(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, bestScore=score)
+        train_classif(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, best_score=score)
         P.log('Finished classification training')
     return class_net
 
 
-def siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set):
+def siam(feature_net, labels, siam_test_set, siam_test_train_set, siam_train_set):
     net = get_siamese_net(feature_net)
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
@@ -81,6 +81,10 @@ def siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set):
         criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
     else:
         criterion = TripletLoss(margin=P.siam_triplet_margin, size_average=P.siam_loss_avg)
+    if P.siam_double_objective:
+        criterion2 = nn.CrossEntropyLoss(size_average=P.siam_do_loss2_avg)
+    else:
+        criterion2 = None
     testset_tuple = (siam_test_set, siam_test_train_set)
     if P.siam_test_upfront:
         P.log('Upfront testing of Siamese net')
@@ -95,7 +99,7 @@ def siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set):
         f = train_siam_triplets_pos_couples
     if P.siam_train:
         P.log('Starting descriptor training')
-        f(net, siam_train_set, testset_tuple, criterion, optimizer, bestScore=score)
+        f(net, siam_train_set, testset_tuple, labels, criterion, optimizer, criterion2, best_score=score)
         P.log('Finished descriptor training')
 
 
@@ -141,7 +145,7 @@ def main():
     if P.feature_net_upfront:
         P.log('Upfront testing of class/feature net as global descriptor')
         test_print_siamese(feature_net, (siam_test_set, siam_test_train_set))
-    siam(feature_net, siam_test_set, siam_test_train_set, siam_train_set)
+    siam(feature_net, labels, siam_test_set, siam_test_train_set, siam_train_set)
 
 
 if __name__ == '__main__':

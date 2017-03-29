@@ -68,7 +68,7 @@ class TestParams(object):
         # general parameters
         self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
         self.cnn_model = models.resnet152
-        self.cuda_device = 0
+        self.cuda_device = 1
         self.save_dir = 'data'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.dataset_id = self.dataset_full.split('/')[-1]
@@ -172,7 +172,7 @@ class TestParams(object):
 
         # double objective loss params
         self.siam_double_objective = True
-        self.siam_do_alpha = 0
+        self.siam_do_loss2_alpha = 1.0
         self.siam_do_loss2_avg = True
 
         # couples params

@@ -150,8 +150,10 @@ def anneal(net, optimizer, epoch, annealing_dict):
     return optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
 
-def train_gen(net, train_set, test_set, criterion, optimizer, params, is_classif, create_epoch, create_batch, output_stats, criterion2=None, loss2_choice=lambda outputs, labels: [outputs[0]], best_score=0):
-
+def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params, create_epoch, create_batch, output_stats, loss_choice=None, criterion2=None, loss2_choice=None, best_score=0):
+    if loss2_choice is None:
+        def loss2_choice(outputs, labels):
+            return [outputs[0], labels[0]]
     # do not use double objectives by default
     loss2_alpha, loss2_avg = None, None
     if is_classif:
@@ -160,6 +162,9 @@ def train_gen(net, train_set, test_set, criterion, optimizer, params, is_classif
         mini_size = params.classif_train_batch_size
         micro_size = params.classif_train_micro_batch
         loss_avg = params.classif_loss_avg
+        if loss_choice is None:
+            def loss_choice(outputs, labels):
+                return list(outputs) + list(labels)
     else:
         n_epochs = params.siam_train_epochs
         annealing_dict = params.siam_annealing
@@ -169,17 +174,20 @@ def train_gen(net, train_set, test_set, criterion, optimizer, params, is_classif
         if criterion2:
             loss2_alpha = params.siam_do_loss2_alpha
             loss2_avg = params.siam_do_loss2_avg
+        if loss_choice is None:
+            def loss_choice(outputs, labels):
+                return list(outputs)
 
     def micro_batch_gen(last, i, is_final, batch):
         prev_loss, mini_batch_size = last
         n = len(batch)
         tensors_in, labels_in = create_batch(batch, n, **batch_args)
         tensors_out = net(*(Variable(t) for t in tensors_in))
-        loss = criterion(*(tensors_out + [Variable(l) for l in labels_in]))
+        loss = criterion(*loss_choice(tensors_out, [Variable(l) for l in labels_in]))
         loss_micro = loss * n / mini_batch_size
         val = loss_micro.data[0] if loss_avg else loss.data[0]
         if criterion2:
-            loss2 = criterion2(*loss2_choice(tensors_out, (Variable(l) for l in labels_in)))
+            loss2 = criterion2(*loss2_choice(tensors_out, [Variable(l) for l in labels_in]))
             loss_micro2 = loss2 * n / mini_batch_size
             loss_micro = loss_micro + loss2_alpha * loss_micro2
             val += loss2_alpha * (loss_micro2.data[0] if loss2_avg else loss2.data[0])
@@ -211,7 +219,7 @@ def train_gen(net, train_set, test_set, criterion, optimizer, params, is_classif
 # and contains in each row the similarity of that test (query) image
 # with all ref images
 def precision1(sim, test_set, ref_set, kth=1):
-    total = len(sim.size(0))
+    total = sim.size(0)
     if kth <= 1:
         max_sim, max_idx = sim.max(1)
     else:
@@ -221,7 +229,7 @@ def precision1(sim, test_set, ref_set, kth=1):
         # get label from ref set which obtained highest score
         max_label.append(ref_set[max_idx[i, 0]][1])
     correct = sum(test_label == max_label[j] for j, (_, test_label) in enumerate(test_set))
-    return float(correct) / total, correct, total, max_sim
+    return float(correct) / total, correct, total, max_sim, max_label
 
 
 # according to Oxford buildings dataset definition of AP

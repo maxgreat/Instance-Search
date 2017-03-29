@@ -108,18 +108,9 @@ def test_descriptor_net(net, test_set, test_ref_set, kth=1, normalized=True):
     # the similarities here should always be on CPU
     # (kthvalue is only implemented there and we don't need GPU perf)
     sim = torch.mm(test_embeddings, ref_embeddings.t()).cpu()
-    if kth <= 1:
-        max_sim, max_idx = sim.max(1)
-    else:
-        max_sim, max_idx = sim.kthvalue(sim.size(1) - kth + 1, 1)
-    max_label = []
-    for i in range(sim.size(0)):
-        # get label from ref set which obtained highest score
-        max_label.append(test_ref_set[max_idx[i, 0]][1])
-
     # stats
-    correct = sum(test_label == max_label[j] for j, (_, test_label) in enumerate(test_set))
-    total = len(test_set)
+    prec1, correct, total, max_sim, max_label = precision1(sim, test_set, test_ref_set, kth)
+    mAP = mean_avg_precision(sim, test_set, test_ref_set, kth)
     sum_pos = sum(sim[i, j] for i, (_, test_label) in enumerate(test_set) for j, (_, ref_label) in enumerate(test_ref_set) if test_label == ref_label)
     sum_neg = sim.sum() - sum_pos
     sum_max = max_sim.sum()
@@ -128,19 +119,19 @@ def test_descriptor_net(net, test_set, test_ref_set, kth=1, normalized=True):
         d = lab_dict[lab]
         lab = max_label[j]
         d.setdefault(lab, d.get(lab, 0) + 1)
-    return correct, total, sum_pos, sum_neg, sum_max, lab_dict
+    return prec1, correct, total, sum_pos, sum_neg, sum_max, mAP, lab_dict
 
 
 def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
-    def print_stats(prefix, c, t, avg_pos, avg_neg, avg_max):
-        s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\n'.format(c, t, float(c) / t)
+    def print_stats(prefix, p1, c, t, avg_pos, avg_neg, avg_max, mAP):
+        s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\t\tmAP:{3:.4f}\n'.format(c, t, p1, mAP)
         s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
         P.log(prefix + s1 + s2)
 
     test_set, test_ref_set = testset_tuple
     net.eval()
-    correct, tot, sum_pos, sum_neg, sum_max, lab_dict = test_descriptor_net(net, test_set, test_ref_set)
+    prec1, correct, tot, sum_pos, sum_neg, sum_max, mAP, lab_dict = test_descriptor_net(net, test_set, test_ref_set)
     # can save labels dictionary (predicted labels for all test labels)
     # TODO
 
@@ -152,7 +143,7 @@ def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
         prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
         P.save_uuid(prefix)
         torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_siam.ckpt"))
-    print_stats('TEST - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(test_set))
+    print_stats('TEST - ', prec1, correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(test_set), mAP)
     torch.save(net, path.join(P.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
 
     # training set accuracy (choose second highest value,
@@ -161,10 +152,10 @@ def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
     couples = get_pos_couples(test_ref_set)
     train_test_set = random.sample(test_ref_set, 200)
     train_test_set = filter(lambda x: len(couples[x[1]]) >= 3, train_test_set)
-    correct, tot, sum_pos, sum_neg, sum_max, _ = test_descriptor_net(net, train_test_set, test_ref_set, kth=2)
+    prec1, correct, tot, sum_pos, sum_neg, sum_max, mAP, _ = test_descriptor_net(net, train_test_set, test_ref_set, kth=2)
     num_pos = sum(test_label == ref_label for _, test_label in train_test_set for _, ref_label in test_ref_set)
     num_neg = len(train_test_set) * len(test_ref_set) - num_pos
-    print_stats('TRAIN - ', correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(train_test_set))
+    print_stats('TRAIN - ', prec1, correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(train_test_set), mAP)
     net.train()
     return best_score
 
@@ -183,7 +174,7 @@ def siam_train_stats(net, testset_tuple, epoch, batch_count, is_last, loss, runn
     return running_loss, score
 
 
-def train_siam_couples(net, train_set, testset_tuple, criterion, optimizer, best_score=0):
+def train_siam_couples(net, train_set, testset_tuple, labels, criterion, optimizer, criterion2=None, best_score=0):
     C, H, W = P.image_input_size
     trans = P.siam_train_trans
     if P.siam_train_pre_proc:
@@ -206,6 +197,7 @@ def train_siam_couples(net, train_set, testset_tuple, criterion, optimizer, best
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_labels = tensor(P.cuda_device, n)
+        labels_in = tensor_t(torch.LongTensor, P.cuda_device, n)
         for j, (i1, (im1, lab)) in enumerate(batch):
             train_in1[j] = trans(im1)
             # with a given probability, choose negative couple,
@@ -227,13 +219,20 @@ def train_siam_couples(net, train_set, testset_tuple, criterion, optimizer, best
                 # choose any positive randomly
                 train_in2[j] = trans(random.choice(couples[im1]))
                 train_labels[j] = 1
-        return [train_in1, train_in2], [train_labels]
+            labels_in[j] = labels.index(lab)
+        return [train_in1, train_in2], [train_labels, labels_in]
 
-    train_gen(net, idx_train_set, testset_tuple, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)
+    def loss_choice(outputs, labels):
+        return [outputs[0], outputs[1], labels[0]]
+
+    def loss2_choice(outputs, labels):
+        return [outputs[0], labels[1]]
+
+    train_gen(False, net, idx_train_set, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, loss_choice=loss_choice, criterion2=criterion2, loss2_choice=loss2_choice, best_score=best_score)
 
 
 # train using triplets generated each epoch
-def train_siam_triplets(net, train_set, testset_tuple, criterion, optimizer, best_score=0):
+def train_siam_triplets(net, train_set, testset_tuple, labels, criterion, optimizer, criterion2=None, best_score=0):
     C, H, W = P.image_input_size
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
@@ -248,7 +247,7 @@ def train_siam_triplets(net, train_set, testset_tuple, criterion, optimizer, bes
         for im, lab in train_set:
             im_pos = random.choice(pos_couples[im])
             im_neg = choose_rand_neg(train_set, lab)
-            triplets.append((im, im_pos, im_neg))
+            triplets.append((lab, im, im_pos, im_neg))
         return triplets
 
     def triplets_easy_hard(train_set, similarities, embeddings):
@@ -287,7 +286,7 @@ def train_siam_triplets(net, train_set, testset_tuple, criterion, optimizer, bes
             _, top_idx = loss_values.topk(n_t)
             for k, idx in enumerate(top_idx):
                 i_neg, i_pos = idx % n_n, idx // n_n
-                triplets.append((im, train_set[i_pos][0], train_set[i_neg][0]))
+                triplets.append((lab, im, train_set[i_pos][0], train_set[i_neg][0]))
         # sample only as many triplets as required
         if P.siam_eh_req_triplets >= len(triplets):
             random.shuffle(triplets)
@@ -312,17 +311,19 @@ def train_siam_triplets(net, train_set, testset_tuple, criterion, optimizer, bes
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_in3 = tensor(P.cuda_device, n, C, H, W)
-        for j, (im1, im2, im3) in enumerate(batch):
+        labels_in = tensor_t(torch.LongTensor, P.cuda_device, n)
+        for j, (lab, im1, im2, im3) in enumerate(batch):
             train_in1[j] = train_trans(im1)
             train_in2[j] = train_trans(im2)
             train_in3[j] = train_trans(im3)
-        return [train_in1, train_in2, train_in3], []
+            labels_in[j] = labels.index(lab)
+        return [train_in1, train_in2, train_in3], [labels_in]
 
-    train_gen(net, train_set, test_set, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)
+    train_gen(False, net, train_set, test_set, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, criterion2=criterion2, best_score=best_score)
 
 
 # train using triplets, constructing triplets from all positive couples
-def train_siam_triplets_pos_couples(net, train_set, testset_tuple, criterion, optimizer, best_score=0, criterion2=None):
+def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, criterion, optimizer, criterion2=None, best_score=0):
     """
         TODO
     """
@@ -376,6 +377,7 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, criterion, op
         train_in1 = tensor(P.cuda_device, n, C, H, W)
         train_in2 = tensor(P.cuda_device, n, C, H, W)
         train_in3 = tensor(P.cuda_device, n, C, H, W)
+        labels_in = tensor_t(torch.LongTensor, P.cuda_device, n)
         # we get a batch of positive couples
         # find negatives for each couple
         for j, (lab, (i1, i2), (im1, im2)) in enumerate(batch):
@@ -418,7 +420,8 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, criterion, op
             train_in1[j] = train_trans(im1)
             train_in2[j] = train_trans(im2)
             train_in3[j] = train_trans(im3)
+            labels_in[j] = labels.index(lab)
         # return input tensors, no labels
-        return [train_in1, train_in2, train_in3], []
+        return [train_in1, train_in2, train_in3], [labels_in]
 
-    train_gen(net, couples, testset_tuple, criterion, optimizer, P, is_classif=False, create_epoch, create_batch, siam_train_stats, criterion2, best_score=best_score)
+    train_gen(False, net, couples, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, criterion2=criterion2, best_score=best_score)

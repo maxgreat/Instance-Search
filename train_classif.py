@@ -89,4 +89,4 @@ def train_classif(net, train_set, test_set, labels, criterion, optimizer, best_s
             lab[j] = labels.index(lab)
         return [train_in], [lab]
 
-    train_gen(net, train_set, test_set, criterion, optimizer, P, is_classif=True, create_epoch, create_batch, output_stats, best_score=best_score)
+    train_gen(True, net, train_set, test_set, criterion, optimizer, P, create_epoch, create_batch, output_stats, best_score=best_score)
