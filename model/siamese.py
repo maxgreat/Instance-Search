@@ -123,7 +123,9 @@ class Siamese1(nn.Module):
             spatial_avg_factor[0] = feature_size2d[0]
         if spatial_avg_factor[1] == -1:
             spatial_avg_factor[1] = feature_size2d[1]
-        self.spatial_reduc = nn.AvgPool2d(spatial_avg_factor)
+        self.spatial_feature_reduc = nn.Sequential(
+            nn.AvgPool2d(spatial_avg_factor)
+        )
         factor = feature_size2d[0] * feature_size2d[1] / (spatial_avg_factor[0] * spatial_avg_factor[1])
         in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
@@ -139,7 +141,7 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
-        x = self.spatial_reduc(x)
+        x = self.spatial_feature_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc1(x)
         x = self.feature_reduc2(x)
