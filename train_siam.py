@@ -124,7 +124,7 @@ def test_descriptor_net(net, test_set, test_ref_set, kth=1, normalized=True):
 
 def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
     def print_stats(prefix, p1, c, t, avg_pos, avg_neg, avg_max, mAP):
-        s1 = 'Correct: {0} / {1} -> acc: {2:.4f}\t\tmAP:{3:.4f}\n'.format(c, t, p1, mAP)
+        s1 = 'Correct: {0} / {1} - acc: {2:.4f} - mAP:{3:.4f}\n'.format(c, t, p1, mAP)
         s2 = 'AVG cosine sim (sq dist) values: pos: {0:.4f} ({1:.4f}), neg: {2:.4f} ({3:.4f}), max: {4:.4f} ({5:.4f})'.format(avg_pos, 2 - 2 * avg_pos, avg_neg, 2 - 2 * avg_neg, avg_max, 2 - 2 * avg_max)
         # TODO if not normalized
         P.log(prefix + s1 + s2)
@@ -191,7 +191,7 @@ def train_siam_couples(net, train_set, testset_tuple, labels, criterion, optimiz
         test_set, test_ref_set = testset_tuple
         similarities, _ = get_similarities(net, test_ref_set)
         random.shuffle(idx_train_set)
-        return idx_train_set, {'similarities': similarities}
+        return idx_train_set, {'similarities': similarities}, {}
 
     def create_batch(batch, n, similarities):
         train_in1 = tensor(P.cuda_device, n, C, H, W)
@@ -305,7 +305,7 @@ def train_siam_triplets(net, train_set, testset_tuple, labels, criterion, optimi
             triplets = triplets_rand()
         if epoch <= 0:
             P.log('#triplets:{0}'.format(len(triplets)))
-        return triplets, {}
+        return triplets, {}, {}
 
     def create_batch(batch, n):
         train_in1 = tensor(P.cuda_device, n, C, H, W)
@@ -371,7 +371,7 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, crite
 
         # shuffle the couples
         shuffled = shuffle_couples(couples)
-        return shuffled, {'epoch': epoch, 'similarities': similarities}
+        return shuffled, {'epoch': epoch, 'similarities': similarities}, {}
 
     def create_batch(batch, n, epoch, similarities):
         train_in1 = tensor(P.cuda_device, n, C, H, W)

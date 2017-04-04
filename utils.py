@@ -151,9 +151,6 @@ def anneal(net, optimizer, epoch, annealing_dict):
 
 
 def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params, create_epoch, create_batch, output_stats, loss_choice=None, criterion2=None, loss2_choice=None, best_score=0):
-    if loss2_choice is None:
-        def loss2_choice(outputs, labels):
-            return [outputs[0], labels[0]]
     # do not use double objectives by default
     loss2_alpha, loss2_avg = None, None
     if is_classif:
@@ -164,7 +161,7 @@ def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params
         loss_avg = params.classif_loss_avg
         if loss_choice is None:
             def loss_choice(outputs, labels):
-                return list(outputs) + list(labels)
+                return outputs + labels
     else:
         n_epochs = params.siam_train_epochs
         annealing_dict = params.siam_annealing
@@ -176,18 +173,22 @@ def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params
             loss2_avg = params.siam_do_loss2_avg
         if loss_choice is None:
             def loss_choice(outputs, labels):
-                return list(outputs)
+                return outputs
+    if loss2_choice is None:
+        def loss2_choice(outputs, labels):
+            return [outputs[0], labels[0]]
 
     def micro_batch_gen(last, i, is_final, batch):
         prev_loss, mini_batch_size = last
         n = len(batch)
         tensors_in, labels_in = create_batch(batch, n, **batch_args)
         tensors_out = net(*(Variable(t) for t in tensors_in))
-        loss = criterion(*loss_choice(tensors_out, [Variable(l) for l in labels_in]))
+        out_list = [tensors_out] if isinstance(tensors_out, Variable) else list(tensors_out)
+        loss = criterion(*loss_choice(out_list, [Variable(l) for l in labels_in]))
         loss_micro = loss * n / mini_batch_size
         val = loss_micro.data[0] if loss_avg else loss.data[0]
         if criterion2:
-            loss2 = criterion2(*loss2_choice(tensors_out, [Variable(l) for l in labels_in]))
+            loss2 = criterion2(*loss2_choice(out_list, [Variable(l) for l in labels_in]))
             loss_micro2 = loss2 * n / mini_batch_size
             loss_micro = loss_micro + loss2_alpha * loss_micro2
             val += loss2_alpha * (loss_micro2.data[0] if loss2_avg else loss2.data[0])
@@ -199,7 +200,7 @@ def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params
         optimizer.zero_grad()
         loss, _ = fold_batches(micro_batch_gen, (0.0, len(batch)), batch, micro_size)
         optimizer.step()
-        running_loss, score = output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score)
+        running_loss, score = output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score, **stats_args)
         return batch_count + 1, score, running_loss
 
     net.train()
@@ -207,7 +208,7 @@ def train_gen(is_classif, net, train_set, test_set, criterion, optimizer, params
         # annealing
         optimizer = anneal(net, optimizer, epoch, annealing_dict)
 
-        dataset, batch_args = create_epoch(epoch, train_set, test_set)
+        dataset, batch_args, stats_args = create_epoch(epoch, train_set, test_set)
 
         init = 0, best_score, 0.0  # batch count, score, running loss
         _, best_score, _ = fold_batches(mini_batch_gen, init, dataset, mini_size, cut_end=True)

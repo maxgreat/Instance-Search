@@ -38,7 +38,7 @@ def test_classif_net(net, test_set, labels, batchSize):
 
 
 def test_print_classif(net, testset_tuple, labels, best_score=0, epoch=0):
-    test_train_set, test_set = testset_tuple
+    test_set, test_train_set = testset_tuple
     net.eval()
     c, t = test_classif_net(net, test_set, labels, P.classif_test_batch_size)
     if (c > best_score):
@@ -46,21 +46,21 @@ def test_print_classif(net, testset_tuple, labels, best_score=0, epoch=0):
         prefix = 'CLASSIF, EPOCH:{0}, SCORE:{1}'.format(epoch, c)
         P.save_uuid(prefix)
         torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_classif.ckpt"))
-    P.log('TEST - correct:{0}/{1} - acc:{2}'.format(c, t, float(c) / t))
+    P.log('TEST - correct: {0} / {1} - acc: {2}'.format(c, t, float(c) / t))
 
     c, t = test_classif_net(net, test_train_set, labels, P.classif_test_batch_size)
     torch.save(net, path.join(P.save_dir, "model_classif_" + str(epoch) + ".ckpt"))
-    P.log("TRAIN - correct:{0}/{1} - acc:{2}".format(c, t, float(c) / t))
+    P.log("TRAIN - correct: {0} / {1} - acc: {2}".format(c, t, float(c) / t))
     net.train()
     return best_score
 
 
-def output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score):
+def output_stats(net, testset_tuple, epoch, batch_count, is_final, loss, running_loss, score, labels):
     disp_int = P.classif_loss_int
+    running_loss += loss
     if batch_count % disp_int == disp_int - 1:
         P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batch_count + 1, running_loss / disp_int))
         running_loss = 0.0
-
     test_int = P.classif_test_int
     if ((test_int > 0 and batch_count % test_int == test_int - 1) or
             (test_int <= 0 and is_final)):
@@ -68,7 +68,7 @@ def output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss
     return running_loss, score
 
 
-def train_classif(net, train_set, test_set, labels, criterion, optimizer, best_score=0):
+def train_classif(net, train_set, testset_tuple, labels, criterion, optimizer, best_score=0):
     """
         TODO
     """
@@ -77,16 +77,16 @@ def train_classif(net, train_set, test_set, labels, criterion, optimizer, best_s
     if P.classif_train_pre_proc:
         trans = transforms.Compose([])
 
-    def create_epoch(epoch, train_set, test_set):
+    def create_epoch(epoch, train_set, testset_tuple):
         random.shuffle(train_set)
-        return train_set, {}
+        return train_set, {}, {'labels': labels}
 
     def create_batch(batch, n):
         train_in = tensor(P.cuda_device, n, C, H, W)
-        lab = tensor_t(torch.LongTensor, P.cuda_device, batchSize)
+        labels_in = tensor_t(torch.LongTensor, P.cuda_device, n)
         for j, (im, lab) in enumerate(batch):
             train_in[j] = trans(im)
-            lab[j] = labels.index(lab)
-        return [train_in], [lab]
+            labels_in[j] = labels.index(lab)
+        return [train_in], [labels_in]
 
-    train_gen(True, net, train_set, test_set, criterion, optimizer, P, create_epoch, create_batch, output_stats, best_score=best_score)
+    train_gen(True, net, train_set, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, output_stats, best_score=best_score)
