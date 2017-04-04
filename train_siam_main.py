@@ -58,7 +58,7 @@ def classif(labels, classif_test_train_set, classif_test_set, classif_train_set)
 
     optimizer = optim.SGD((p for p in class_net.parameters() if p.requires_grad), lr=P.classif_lr, momentum=P.classif_momentum, weight_decay=P.classif_weight_decay)
     criterion = nn.CrossEntropyLoss(size_average=P.classif_loss_avg)
-    testset_tuple = (classif_test_train_set, classif_test_set)
+    testset_tuple = (classif_test_set, classif_test_train_set)
     if P.classif_test_upfront:
         P.log('Upfront testing of classification model')
         score = test_print_classif(class_net, testset_tuple, labels)
