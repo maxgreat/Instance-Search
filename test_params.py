@@ -27,6 +27,7 @@ def match_oxford(x):
 image_sizes = {
     'CLICIDE_max_224sq': (3, 224, 224),
     'CLICIDE_video_227sq': (3, 227, 227),
+    'CLICIDE_video_224sq': (3, 224, 224),
     'fourviere_clean2_224sq': (3, 224, 224),
     'oxford5k_video_224sq': (3, 224, 224)
 }
@@ -39,6 +40,7 @@ feature_sizes = {
 
 mean_std_files = {
     'CLICIDE_video_227sq': 'data/cli.txt',
+    'CLICIDE_video_224sq': 'data/CLICIDE_224sq_train_ms.txt',
     'CLICIDE_max_224sq': 'data/CLICIDE_224sq_train_ms.txt',
     'fourviere_clean2_224sq': 'data/fourviere_224sq_train_ms.txt',
     'oxford5k_video_224sq': 'data/oxford5k_224sq_train_ms.txt'
@@ -47,6 +49,7 @@ mean_std_files = {
 match_image = {
     'CLICIDE_video_227sq': match_video,
     'CLICIDE_max_224sq': match_video,
+    'CLICIDE_video_224sq': match_video,
     'fourviere_clean2_224sq': match_fou_clean2,
     'oxford5k_video_224sq': match_oxford
 }
@@ -73,7 +76,7 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/CLICIDE_max_224sq'
+        self.dataset_full = 'data/pre_proc/CLICIDE_video_224sq'
         self.cnn_model = models.resnet152
         self.cuda_device = 1
         self.save_dir = 'data'
@@ -96,9 +99,9 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_preload_net = 'data/finetune_classif/cli_best_resnet152_classif_finetuned.ckpt'
+        self.classif_preload_net = ''
         self.classif_test_upfront = True
-        self.classif_train = False
+        self.classif_train = True
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
@@ -112,12 +115,13 @@ class TestParams(object):
         self.classif_train_micro_batch = 0
         self.classif_train_pre_proc = False
         self.classif_train_aug_rot = r = 45
-        self.classif_train_aug_hrange = hr = 0.2
-        self.classif_train_aug_vrange = vr = 0.2
-        self.classif_train_aug_hsrange = hsr = 0.2
-        self.classif_train_aug_vsrange = vsr = 0.2
+        self.classif_train_aug_hrange = hr = 0
+        self.classif_train_aug_vrange = vr = 0
+        self.classif_train_aug_hsrange = hsr = 0.5
+        self.classif_train_aug_vsrange = vsr = 0.5
+        self.classif_train_aug_hflip = hflip = True
         # self.classif_train_trans = transforms.Compose([transforms.Scale(350), transforms.RandomCrop(224), transforms.ToTensor(), transforms.Normalize(m, s)])
-        self.classif_train_trans = transforms.Compose([random_affine(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize(m, s)])
+        self.classif_train_trans = transforms.Compose([random_affine_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.classif_lr = 1e-2
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
@@ -128,16 +132,16 @@ class TestParams(object):
         self.classif_test_int = 0
 
         # settings for feature net constructed from classification net
-        self.feature_net_upfront = False
+        self.feature_net_upfront = True
         self.feature_net_use_class_net = True
         self.feature_net_average = False
         self.feature_net_classify = True
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = True
+        self.siam_test_upfront = False
         self.siam_use_feature_net = True
-        self.siam_train = True
+        self.siam_train = False
         # TODO should this always be the number of instances ?
         self.siam_feature_dim = 464
         self.siam_conv_average = (1, 1)
@@ -167,7 +171,7 @@ class TestParams(object):
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 64
-        self.siam_train_micro_batch = 8
+        self.siam_train_micro_batch = 4
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
@@ -192,7 +196,7 @@ class TestParams(object):
         # params for semi-hard mode
         # number of epochs after which we
         # take only the hardest examples:
-        self.siam_sh_epoch_switch = 5
+        self.siam_sh_epoch_switch = 2
 
         # params for easy-hard choice mode
         # n_p: number of easy positives for each image
