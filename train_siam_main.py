@@ -10,7 +10,7 @@ from train_classif import *
 from train_siam import *
 from dataset import ReadImages
 from test_params import P
-from utils import cv_rgb
+from utils import imread_rgb
 
 
 def get_class_net(labels):
@@ -123,7 +123,7 @@ def main():
             filters = [lambda x, y: True for _ in pre_procs]
         outs = [[] for _ in pre_procs]
         for im, lab in dataset:
-            im_o = cv_rgb(im)
+            im_o = imread_rgb(im)
             for out, pre_proc, t, f in zip(outs, pre_procs, trans, filters):
                 if f(im, lab):
                     im_out = t(im_o) if pre_proc else im_o

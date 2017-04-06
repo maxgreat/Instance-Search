@@ -163,13 +163,15 @@ def random_h_flip_cv(img):
     return img[:, ::-1, :].copy() if random.random() < 0.5 else img
 
 
-def cv_rgb(fname):
+def imread_rgb(fname):
     # read and convert image from BGR to RGB
     im = cv2.imread(fname)
-    im2 = im.copy()
-    im2[:, :, 0] = im[:, :, 2]
-    im2[:, :, 2] = im[:, :, 0]
-    return im2
+    return cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+
+def tensor_2_bgr(tensor):
+    # convert RGB tensor to BGR numpy array as used in OpenCV
+    return cv2.cvtColor(tensor.numpy(), cv2.COLOR_RGB2BGR)
 
 
 # ------------ Generators for couples/triplets ------------------
