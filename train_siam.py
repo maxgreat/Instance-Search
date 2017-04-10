@@ -142,9 +142,9 @@ def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
         best_score = correct
         prefix = 'SIAM, EPOCH:{0}, SCORE:{1}'.format(epoch, correct)
         P.save_uuid(prefix)
-        torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_siam.ckpt"))
+        torch.save(net.state_dict(), path.join(P.save_dir, P.unique_str() + "_best_siam.pth.tar"))
     print_stats('TEST - ', prec1, correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(test_set), mAP)
-    torch.save(net, path.join(P.save_dir, "model_siam_" + str(epoch) + ".ckpt"))
+    torch.save(net.state_dict(), path.join(P.save_dir, "model_siam_" + str(epoch) + ".pth.tar"))
 
     # training set accuracy (choose second highest value,
     # as highest should almost certainly be the same image)

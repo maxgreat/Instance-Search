@@ -14,12 +14,12 @@ from utils import imread_rgb
 
 
 def get_class_net(labels):
-    if P.classif_preload_net:
-        net = torch.load(P.classif_preload_net)
-    elif P.finetuning:
+    if P.finetuning:
         net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
     else:
         net = P.cnn_model()
+    if P.classif_preload_net:
+        net.load_state_dict(torch.load(P.classif_preload_net))
     if P.cuda_device >= 0:
         net.cuda()
     else:
@@ -40,12 +40,12 @@ def get_feature_net(class_net):
 
 
 def get_siamese_net(feature_net):
-    if P.siam_preload_net:
-        net = torch.load(P.siam_preload_net)
-    elif P.siam_use_feature_net:
+    if P.siam_use_feature_net:
         net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     else:
         net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
+    if P.siam_preload_net:
+        net.load_state_dict(torch.load(P.siam_preload_net))
     if P.cuda_device >= 0:
         net.cuda()
     else:

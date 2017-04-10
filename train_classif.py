@@ -45,11 +45,11 @@ def test_print_classif(net, testset_tuple, labels, best_score=0, epoch=0):
         best_score = c
         prefix = 'CLASSIF, EPOCH:{0}, SCORE:{1}'.format(epoch, c)
         P.save_uuid(prefix)
-        torch.save(net, path.join(P.save_dir, P.unique_str() + "_best_classif.ckpt"))
+        torch.save(net.state_dict(), path.join(P.save_dir, P.unique_str() + "_best_classif.pth.tar"))
     P.log('TEST - correct: {0} / {1} - acc: {2}'.format(c, t, float(c) / t))
 
     c, t = test_classif_net(net, test_train_set, labels, P.classif_test_batch_size)
-    torch.save(net, path.join(P.save_dir, "model_classif_" + str(epoch) + ".ckpt"))
+    torch.save(net.state_dict(), path.join(P.save_dir, "model_classif_" + str(epoch) + ".pth.tar"))
     P.log("TRAIN - correct: {0} / {1} - acc: {2}".format(c, t, float(c) / t))
     net.train()
     return best_score

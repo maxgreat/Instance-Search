@@ -99,9 +99,9 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_preload_net = ''
+        self.classif_preload_net = 'data/finetune_classif/cli_best_resnet152_classif_finetuned.ckpt'
         self.classif_test_upfront = True
-        self.classif_train = True
+        self.classif_train = False
         self.classif_test_batch_size = 128
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
@@ -114,11 +114,11 @@ class TestParams(object):
         self.classif_train_batch_size = 32
         self.classif_train_micro_batch = 0
         self.classif_train_pre_proc = False
-        self.classif_train_aug_rot = r = 45
+        self.classif_train_aug_rot = r = 180
         self.classif_train_aug_hrange = hr = 0
         self.classif_train_aug_vrange = vr = 0
-        self.classif_train_aug_hsrange = hsr = 0.5
-        self.classif_train_aug_vsrange = vsr = 0.5
+        self.classif_train_aug_hsrange = hsr = 0.75
+        self.classif_train_aug_vsrange = vsr = 0.75
         self.classif_train_aug_hflip = hflip = True
         # self.classif_train_trans = transforms.Compose([transforms.Scale(350), transforms.RandomCrop(224), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.classif_train_trans = transforms.Compose([random_affine_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
@@ -139,11 +139,11 @@ class TestParams(object):
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = False
+        self.siam_test_upfront = True
         self.siam_use_feature_net = True
-        self.siam_train = False
-        # TODO should this always be the number of instances ?
-        self.siam_feature_dim = 464
+        self.siam_train = True
+        # TODO should this be the number of instances ?
+        self.siam_feature_dim = 2048
         self.siam_conv_average = (1, 1)
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_test_batch_size = 32
@@ -171,7 +171,7 @@ class TestParams(object):
         self.siam_train_trans = self.classif_train_trans
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 64
-        self.siam_train_micro_batch = 4
+        self.siam_train_micro_batch = 8
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
