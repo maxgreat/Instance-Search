@@ -99,10 +99,11 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_preload_net = 'data/finetune_classif/cli_best_resnet152_classif_finetuned.ckpt'
+        self.classif_preload_net = ''
+        self.classif_feature_reduc = False
         self.classif_test_upfront = True
-        self.classif_train = False
-        self.classif_test_batch_size = 128
+        self.classif_train = True
+        self.classif_test_batch_size = 32
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
@@ -139,9 +140,9 @@ class TestParams(object):
 
         # Siamese net general and testing params
         self.siam_preload_net = ''
-        self.siam_test_upfront = True
+        self.siam_test_upfront = False
         self.siam_use_feature_net = True
-        self.siam_train = True
+        self.siam_train = False
         # TODO should this be the number of instances ?
         self.siam_feature_dim = 2048
         self.siam_conv_average = (1, 1)

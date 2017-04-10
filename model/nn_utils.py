@@ -14,8 +14,7 @@ def convolutionalize(fc, in_size2d):
     if has_bias:
         conv.bias.data = fc.bias.data.clone()
     for i in range(out_size):
-        # TODO check if this is correct
-        conv.weight.data = fc.weight.data[i].view(in_channels, *in_size2d).clone()
+        conv.weight.data[i] = fc.weight.data[i].view(in_channels, *in_size2d).clone()
     return conv
 
 

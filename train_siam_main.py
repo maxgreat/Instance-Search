@@ -15,7 +15,7 @@ from utils import imread_rgb
 
 def get_class_net(labels):
     if P.finetuning:
-        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks)
+        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
     else:
         net = P.cnn_model()
     if P.classif_preload_net:
