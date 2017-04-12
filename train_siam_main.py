@@ -20,10 +20,7 @@ def get_class_net(labels):
         net = P.cnn_model()
     if P.classif_preload_net:
         net.load_state_dict(torch.load(P.classif_preload_net))
-    if P.cuda_device >= 0:
-        net.cuda()
-    else:
-        net.cpu()
+    net = move_device(net, P.cuda_device)
     return net
 
 
@@ -32,24 +29,22 @@ def get_feature_net(class_net):
         net = FeatureNet(class_net, P.feature_size2d, P.feature_net_average, P.feature_net_classify)
     else:
         net = FeatureNet(P.cnn_model(pretrained=P.finetuning), P.feature_size2d, P.feature_net_average, P.feature_net_classify)
-    if P.cuda_device >= 0:
-        net.cuda()
-    else:
-        net.cpu()
+    net = move_device(net, P.cuda_device)
     return net
 
 
 def get_siamese_net(feature_net):
-    if P.siam_use_feature_net:
+    if P.siam_model == 'siam2' and P.siam_use_feature_net:
+        net = Siamese2(feature_net, P.siam2_k, P.siam_feature_dim, P.feature_size2d)
+    elif P.siam_model == 'siam2':
+        net = Siamese2(P.cnn_model(pretrained=P.finetuning), P.siam2_k, P.siam_feature_dim, P.feature_size2d)
+    elif P.siam_use_feature_net:
         net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     else:
         net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     if P.siam_preload_net:
         net.load_state_dict(torch.load(P.siam_preload_net))
-    if P.cuda_device >= 0:
-        net.cuda()
-    else:
-        net.cpu()
+    net = move_device(net, P.cuda_device)
     return net
 
 

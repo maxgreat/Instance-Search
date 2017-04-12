@@ -89,4 +89,7 @@ def train_classif(net, train_set, testset_tuple, labels, criterion, optimizer, b
             labels_in[j] = labels.index(lab)
         return [train_in], [labels_in]
 
-    train_gen(True, net, train_set, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, output_stats, best_score=best_score)
+    def create_loss(t_out, labels_in):
+        return criterion(t_out, labels_in[0]), None  # no double loss
+
+    train_gen(True, net, train_set, testset_tuple, optimizer, P, create_epoch, create_batch, output_stats, create_loss, best_score=best_score)

@@ -8,6 +8,7 @@ from torch.autograd import Variable
 from os import path
 
 from utils import *
+from model.siamese import Siamese2
 from model.custom_modules import NormalizeL2Fun
 from test_params import P
 
@@ -35,6 +36,7 @@ def get_device_and_size(net, n, sim_matrix=False):
 # get all embeddings (feature vectors) of a dataset from a given net
 # the net is assumed to be in eval mode
 def get_embeddings(net, dataset, device, out_size):
+    is_siam2 = isinstance(net, Siamese2)
     C, H, W = P.image_input_size
     test_trans = transforms.Compose([])
     if not P.siam_test_pre_proc:
@@ -45,9 +47,13 @@ def get_embeddings(net, dataset, device, out_size):
     def batch(last, i, is_final, batch):
         embeddings = last
         n = len(batch)
-        test_in = tensor(P.cuda_device, n, C, H, W)
-        for j in range(n):
-            test_in[j] = test_trans(batch[j][0])
+        if is_siam2:
+            # one image at a time
+            test_in = move_device(batch[0][0].unsqueeze(0), P.cuda_device)
+        else:
+            test_in = tensor(P.cuda_device, n, C, H, W)
+            for j in range(n):
+                test_in[j] = test_trans(batch[j][0])
 
         out = net(Variable(test_in, volatile=True))
         for j in range(n):
@@ -222,13 +228,15 @@ def train_siam_couples(net, train_set, testset_tuple, labels, criterion, optimiz
             labels_in[j] = labels.index(lab)
         return [train_in1, train_in2], [train_labels, labels_in]
 
-    def loss_choice(outputs, labels):
-        return [outputs[0], outputs[1], labels[0]]
+    def create_loss(tensors_out, labels_in):
+        # couple of output descriptors and the train labels
+        loss = criterion(tensors_out[0], tensors_out[1], labels_in[0])
+        loss2 = None
+        if criterion2:
+            loss2 = criterion2(tensors_out[0], labels_in[1])
+        return loss, loss2
 
-    def loss2_choice(outputs, labels):
-        return [outputs[0], labels[1]]
-
-    train_gen(False, net, idx_train_set, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, loss_choice=loss_choice, criterion2=criterion2, loss2_choice=loss2_choice, best_score=best_score)
+    train_gen(False, net, idx_train_set, testset_tuple, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)
 
 
 # train using triplets generated each epoch
@@ -319,14 +327,23 @@ def train_siam_triplets(net, train_set, testset_tuple, labels, criterion, optimi
             labels_in[j] = labels.index(lab)
         return [train_in1, train_in2, train_in3], [labels_in]
 
-    train_gen(False, net, train_set, test_set, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, criterion2=criterion2, best_score=best_score)
+    def create_loss(tensors_out, labels_in):
+        loss = criterion(*tensors_out)
+        loss2 = None
+        if criterion2:
+            loss2 = criterion2(tensors_out[0], labels_in[0])
+        return loss, loss2
+
+    train_gen(False, net, train_set, test_set, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)
 
 
 # train using triplets, constructing triplets from all positive couples
+# if Siamese2 network, use adapted loss definition
 def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, criterion, optimizer, criterion2=None, best_score=0):
     """
         TODO
     """
+    is_siam2 = isinstance(net, Siamese2)
     C, H, W = P.image_input_size
     train_trans = P.siam_train_trans
     if P.siam_train_pre_proc:
@@ -417,11 +434,41 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, crite
             if im3 is None:
                 # default to random negative
                 im3 = choose_rand_neg(train_set, lab)
-            train_in1[j] = train_trans(im1)
-            train_in2[j] = train_trans(im2)
-            train_in3[j] = train_trans(im3)
+            if is_siam2:
+                # one image at a time
+                train_in1 = move_device(train_trans(im1).unsqueeze(0), P.cuda_device)
+                train_in2 = move_device(train_trans(im2).unsqueeze(0), P.cuda_device)
+                train_in3 = move_device(train_trans(im3).unsqueeze(0), P.cuda_device)
+            else:
+                train_in1[j] = train_trans(im1)
+                train_in2[j] = train_trans(im2)
+                train_in3[j] = train_trans(im3)
             labels_in[j] = labels.index(lab)
         # return input tensors, no labels
         return [train_in1, train_in2, train_in3], [labels_in]
 
-    train_gen(False, net, couples, testset_tuple, criterion, optimizer, P, create_epoch, create_batch, siam_train_stats, criterion2=criterion2, best_score=best_score)
+    if is_siam2:
+        def create_loss(out, labels_in):
+            # out is a tuple of 3 tuples, each for the descriptor
+            # and a tensor with all classification results for the highest
+            # classification values. the first loss is a simple loss on the
+            # descriptors. the second loss is a classification loss for
+            # each sub-region of the input. we simply sum-aggregate here
+            loss = criterion(*(t for t, _ in out))
+            cls_out = out[0][1]
+            loss2 = criterion2(cls_out[:, :, 0], labels_in[0])
+            k = cls_out.size(2)
+            for i in range(1, k):
+                loss2 += criterion2(cls_out[:, :, i], labels_in[0])
+            if P.siam_do_loss2_avg:
+                loss2 /= k
+            return loss, loss2
+    else:
+        def create_loss(tensors_out, labels_in):
+            loss = criterion(*tensors_out)
+            loss2 = None
+            if criterion2:
+                loss2 = criterion2(tensors_out[0], labels_in[0])
+            return loss, loss2
+
+    train_gen(False, net, couples, testset_tuple, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)
