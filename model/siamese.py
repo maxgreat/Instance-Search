@@ -135,7 +135,7 @@ class Siamese1(nn.Module):
         return x
 
     def forward(self, x1, x2=None, x3=None):
-        if self.training and x3:
+        if self.training and x3 is not None:
             return self.forward_single(x1), self.forward_single(x2), self.forward_single(x3)
         elif self.training:
             return self.forward_single(x1), self.forward_single(x2)
@@ -163,6 +163,8 @@ class Siamese2(nn.Module):
         self.k = k
         self.feature_size2d = feature_size2d
         self.features, self.feature_reduc, self.classifier = extract_layers(net)
+
+        # factor = 1
         factor = feature_size2d[0] * feature_size2d[1]
         in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
@@ -215,14 +217,15 @@ class Siamese2(nn.Module):
         for x1, x2, y1, y2 in top_idx:
             cls_out[:, :, i] = c[:, :, x1, y1]
             i += 1
-            region = x[:, :, x1:x2, y1:y2].contiguous().view(c.size(0), -1)
+            # region = x[:, :, x1, y1]
+            region = x[:, :, x1:x2, y1:y2].contiguous().view(x.size(0), -1)
             region = self.feature_reduc1(region)
-            acc[:, :] = acc[:, :] + region
+            acc = acc + region
         x = self.feature_reduc2(acc)
         return x, cls_out
 
     def forward(self, x1, x2=None, x3=None):
-        if self.training and x3:
+        if self.training and x3 is not None:
             return self.forward_single(x1), self.forward_single(x2), self.forward_single(x3)
         elif self.training:
             return self.forward_single(x1), self.forward_single(x2)

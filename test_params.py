@@ -116,16 +116,16 @@ class TestParams(object):
         # Classification net training params
         self.classif_train_epochs = 50
         self.classif_train_batch_size = 32
-        self.classif_train_micro_batch = 16
-        self.classif_train_pre_proc = False
+        self.classif_train_micro_batch = 0
+        self.classif_train_pre_proc = True
         self.classif_train_aug_rot = r = 90
         self.classif_train_aug_hrange = hr = 0
         self.classif_train_aug_vrange = vr = 0
         self.classif_train_aug_hsrange = hsr = 0.6
         self.classif_train_aug_vsrange = vsr = 0.6
         self.classif_train_aug_hflip = hflip = True
-        # self.classif_train_trans = transforms.Compose([transforms.Scale(350), transforms.RandomCrop(224), transforms.ToTensor(), transforms.Normalize(m, s)])
-        self.classif_train_trans = transforms.Compose([random_affine_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
+        self.classif_train_trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)])
+        # self.classif_train_trans = transforms.Compose([random_affine_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
         self.classif_lr = 1e-2
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
@@ -133,7 +133,11 @@ class TestParams(object):
         self.classif_annealing = {30: 0.1}
         self.classif_loss_avg = True
         self.classif_loss_int = 10
-        self.classif_test_int = 0
+        self.classif_test_int = 50
+        # the batch norm layer cannot be trained if the micro-batch size
+        # is too small, as global variances/means cannot be properly
+        # approximated in this case
+        self.classif_train_bn = self.classif_train_micro_batch <= 0 or self.classif_train_micro_batch >= 8
 
         # settings for feature net constructed from classification net
         self.feature_net_upfront = False
@@ -144,7 +148,7 @@ class TestParams(object):
         # Siamese net general and testing params
         self.siam_model = 'siam2'
         self.siam_preload_net = ''
-        self.siam_test_upfront = True
+        self.siam_test_upfront = False
         self.siam_use_feature_net = True
         self.siam_train = True
         # TODO should this be the number of instances ?
@@ -153,7 +157,7 @@ class TestParams(object):
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_test_batch_size = 1
         self.siam_test_pre_proc = True
-        self.siam_test_trans = transforms.Compose([scale_cv(300), transforms.ToTensor()])
+        self.siam_test_trans = transforms.Compose([scale_cv(352), transforms.ToTensor()])
         if not self.test_norm_per_image:
             # normalization not done per image during test
             self.siam_test_trans.transforms.append(transforms.Normalize(m, s))
@@ -185,14 +189,16 @@ class TestParams(object):
         self.siam_train_epochs = 20
         self.siam_loss_avg = False
         self.siam_loss_int = 10
-        self.siam_test_int = 0
+        self.siam_test_int = 50
+        # batch norm layer train mode (see above for details)
+        self.siam_train_bn = self.siam_train_micro_batch <= 0 or self.siam_train_micro_batch >= 8
 
         # Siamese2 params: number of regions to consider
         self.siam2_k = 4
 
         # double objective loss params
-        self.siam_double_objective = True
-        self.siam_do_loss2_alpha = 1.5
+        self.siam_double_objective = False
+        self.siam_do_loss2_alpha = 1.0
         self.siam_do_loss2_avg = True
 
         # couples params

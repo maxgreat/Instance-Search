@@ -1,7 +1,6 @@
 # -*- encoding: utf-8 -*-
 
 import random
-import math
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 
@@ -10,6 +9,7 @@ from os import path
 from utils import *
 from model.siamese import Siamese2
 from model.custom_modules import NormalizeL2Fun
+from model.nn_utils import set_net_train
 from test_params import P
 
 # TODO possibly transform all images before creating couples/triplets
@@ -44,7 +44,7 @@ def get_embeddings(net, dataset, device, out_size):
     if P.test_norm_per_image:
         test_trans.transforms.append(norm_image_t)
 
-    def batch(last, i, is_final, batch):
+    def batch(last, i, is_final, batch, net):
         embeddings = last
         n = len(batch)
         if is_siam2:
@@ -59,19 +59,20 @@ def get_embeddings(net, dataset, device, out_size):
         for j in range(n):
             embeddings[i + j] = out.data[j]
         return embeddings
+
     init = tensor(device, len(dataset), out_size)
-    return fold_batches(batch, init, dataset, P.siam_test_batch_size)
+    return fold_batches(batch, init, dataset, P.siam_test_batch_size, add_args={'net': net})
 
 
 # get all similarities between pairs of images of the dataset
 # net is assumed to be in train mode
 def get_similarities(net, dataset):
-    net.eval()
+    set_net_train(net, False)
     n = len(dataset)
     d, o = get_device_and_size(net, n, sim_matrix=True)
     embeddings = get_embeddings(net, dataset, d, o)
     similarities = torch.mm(embeddings, embeddings.t())
-    net.train()
+    set_net_train(net, True, bn_train=P.siam_train_bn)
     return similarities, d
 
 
@@ -136,7 +137,7 @@ def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
         P.log(prefix + s1 + s2)
 
     test_set, test_ref_set = testset_tuple
-    net.eval()
+    set_net_train(net, False)
     prec1, correct, tot, sum_pos, sum_neg, sum_max, mAP, lab_dict = test_descriptor_net(net, test_set, test_ref_set)
     # can save labels dictionary (predicted labels for all test labels)
     # TODO
@@ -162,7 +163,7 @@ def test_print_siamese(net, testset_tuple, best_score=0, epoch=0):
     num_pos = sum(test_label == ref_label for _, test_label in train_test_set for _, ref_label in test_ref_set)
     num_neg = len(train_test_set) * len(test_ref_set) - num_pos
     print_stats('TRAIN - ', prec1, correct, tot, sum_pos / num_pos, sum_neg / num_neg, sum_max / len(train_test_set), mAP)
-    net.train()
+    set_net_train(net, True, bn_train=P.siam_train_bn)
     return best_score
 
 
@@ -231,9 +232,9 @@ def train_siam_couples(net, train_set, testset_tuple, labels, criterion, optimiz
     def create_loss(tensors_out, labels_in):
         # couple of output descriptors and the train labels
         loss = criterion(tensors_out[0], tensors_out[1], labels_in[0])
-        loss2 = None
-        if criterion2:
-            loss2 = criterion2(tensors_out[0], labels_in[1])
+        if criterion2 is None:
+            return loss, None
+        loss2 = criterion2(tensors_out[0], labels_in[1])
         return loss, loss2
 
     train_gen(False, net, idx_train_set, testset_tuple, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)
@@ -304,11 +305,11 @@ def train_siam_triplets(net, train_set, testset_tuple, labels, criterion, optimi
     def create_epoch(epoch, train_set, test_set):
         if P.siam_choice_mode == 'easy-hard':
             test_set, test_ref_set = test_set
-            net.eval()
+            set_net_train(net, False)
             embeddings = get_embeddings(net, test_ref_set, sim_device, out_size)
             similarities = torch.mm(embeddings, embeddings.t())
             triplets = triplets_easy_hard(train_set, similarities, embeddings)
-            net.train()
+            set_net_train(net, True, bn_train=P.siam_train_bn)
         else:
             triplets = triplets_rand()
         if epoch <= 0:
@@ -329,9 +330,9 @@ def train_siam_triplets(net, train_set, testset_tuple, labels, criterion, optimi
 
     def create_loss(tensors_out, labels_in):
         loss = criterion(*tensors_out)
-        loss2 = None
-        if criterion2:
-            loss2 = criterion2(tensors_out[0], labels_in[0])
+        if criterion2 is None:
+            return loss, None
+        loss2 = criterion2(tensors_out[0], labels_in[0])
         return loss, loss2
 
     train_gen(False, net, train_set, test_set, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)
@@ -455,6 +456,8 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, crite
             # descriptors. the second loss is a classification loss for
             # each sub-region of the input. we simply sum-aggregate here
             loss = criterion(*(t for t, _ in out))
+            if criterion2 is None:
+                return loss, None
             cls_out = out[0][1]
             loss2 = criterion2(cls_out[:, :, 0], labels_in[0])
             k = cls_out.size(2)
@@ -466,9 +469,9 @@ def train_siam_triplets_pos_couples(net, train_set, testset_tuple, labels, crite
     else:
         def create_loss(tensors_out, labels_in):
             loss = criterion(*tensors_out)
-            loss2 = None
-            if criterion2:
-                loss2 = criterion2(tensors_out[0], labels_in[0])
+            if criterion2 is None:
+                return loss, None
+            loss2 = criterion2(tensors_out[0], labels_in[0])
             return loss, loss2
 
     train_gen(False, net, couples, testset_tuple, optimizer, P, create_epoch, create_batch, siam_train_stats, create_loss, best_score=best_score)

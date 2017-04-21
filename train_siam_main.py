@@ -71,7 +71,6 @@ def siam(feature_net, labels, siam_test_set, siam_test_train_set, siam_train_set
     net = get_siamese_net(feature_net)
 
     optimizer = optim.SGD((p for p in net.parameters() if p.requires_grad), lr=P.siam_lr, momentum=P.siam_momentum, weight_decay=P.siam_weight_decay)
-    # criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
     if P.siam_train_mode == 'couples':
         criterion = nn.CosineEmbeddingLoss(margin=P.siam_cos_margin, size_average=P.siam_loss_avg)
     else:

@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from os import path
 
 from utils import *
+from model.nn_utils import set_net_train
 from test_params import P
 
 
@@ -21,7 +22,7 @@ def test_classif_net(net, test_set, labels, batchSize):
     if P.test_norm_per_image:
         trans.transforms.append(norm_image_t)
 
-    def eval_batch_test(last, i, is_final, batch):
+    def eval_batch_test(last, i, is_final, batch, net, labels):
         correct, total = last
         C, H, W = P.image_input_size
         test_in = tensor(P.cuda_device, len(batch), C, H, W)
@@ -34,12 +35,12 @@ def test_classif_net(net, test_set, labels, batchSize):
         correct += sum(labels.index(testLabel) == predicted[j][0] for j, (_, testLabel) in enumerate(batch))
         return correct, total
 
-    return fold_batches(eval_batch_test, (0, 0), test_set, batchSize)
+    return fold_batches(eval_batch_test, (0, 0), test_set, batchSize, add_args={'net': net, 'labels': labels})
 
 
 def test_print_classif(net, testset_tuple, labels, best_score=0, epoch=0):
     test_set, test_train_set = testset_tuple
-    net.eval()
+    set_net_train(net, False)
     c, t = test_classif_net(net, test_set, labels, P.classif_test_batch_size)
     if (c > best_score):
         best_score = c
@@ -51,7 +52,7 @@ def test_print_classif(net, testset_tuple, labels, best_score=0, epoch=0):
     c, t = test_classif_net(net, test_train_set, labels, P.classif_test_batch_size)
     torch.save(net.state_dict(), path.join(P.save_dir, "model_classif_" + str(epoch) + ".pth.tar"))
     P.log("TRAIN - correct: {0} / {1} - acc: {2}".format(c, t, float(c) / t))
-    net.train()
+    set_net_train(net, True, bn_train=P.classif_train_bn)
     return best_score
 
 
@@ -79,6 +80,7 @@ def train_classif(net, train_set, testset_tuple, labels, criterion, optimizer, b
 
     def create_epoch(epoch, train_set, testset_tuple):
         random.shuffle(train_set)
+        # labels are needed for stats
         return train_set, {}, {'labels': labels}
 
     def create_batch(batch, n):
