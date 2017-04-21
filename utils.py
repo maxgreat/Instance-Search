@@ -4,6 +4,7 @@ import torch
 import torch.optim as optim
 from torch.autograd import Variable
 import torchvision.transforms as transforms
+from model.nn_utils import set_net_train
 import types
 import random
 import numpy as np
@@ -12,6 +13,7 @@ import itertools
 from PIL import Image
 import cv2
 from scipy.ndimage import interpolation
+import gc
 
 
 # -------------------------- IO stuff --------------------------
@@ -85,11 +87,11 @@ def pad_square_cv(img):
 
 def scale_cv(new_size, inter=cv2.INTER_CUBIC):
     if isinstance(new_size, tuple):
-        def t(img):
+        def sc_cv(img):
             return cv2.resize(img, new_size, interpolation=inter)
-        return t
+        return sc_cv
     else:
-        def t(img):
+        def sc_cv(img):
             h, w, _ = img.shape
             if (w <= h and w == new_size) or (h <= w and h == new_size):
                 return img
@@ -101,27 +103,27 @@ def scale_cv(new_size, inter=cv2.INTER_CUBIC):
                 oh = new_size
                 ow = int(new_size * w / h)
                 return cv2.resize(img, (ow, oh), interpolation=inter)
-        return t
+        return sc_cv
 
 
 def center_crop_cv(size):
     if not isinstance(size, tuple):
         size = (int(size), int(size))
 
-    def crop(img):
+    def cent_crop_cv(img):
         h, w, _ = img.shape
         th, tw = size
         x1 = int(round((w - tw) / 2.))
         y1 = int(round((h - th) / 2.))
         return img[y1:y1 + th, x1:x1 + tw]
-    return crop
+    return cent_crop_cv
 
 
 def random_crop_cv(size):
     if not isinstance(size, tuple):
         size = (int(size), int(size))
 
-    def crop(img):
+    def rand_crop_cv(img):
         h, w, _ = img.shape
         th, tw = size
         if w == tw and h == th:
@@ -129,13 +131,13 @@ def random_crop_cv(size):
         x1 = random.randint(0, w - tw)
         y1 = random.randint(0, h - th)
         return img[y1:y1 + th, x1:x1 + tw]
-    return crop
+    return rand_crop_cv
 
 
 def random_affine_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h_flip=False):
     rotation = rotation * (np.pi / 180)
 
-    def trans(img):
+    def rand_affine_cv(img):
         # compose the affine transformation applied to x
         angle = np.random.uniform(-rotation, rotation)
         # shift needs to be scaled by size of image in that dimension
@@ -171,7 +173,7 @@ def random_affine_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h
             return interpolation.affine_transform(channel, mat[:2, :2], mat[:2, 2])
         # apply transformation to each channel separately
         return np.dstack(map(t, (img[:, :, i] for i in range(img.shape[2]))))
-    return trans
+    return rand_affine_cv
 
 
 def random_h_flip_cv(img):
@@ -250,17 +252,17 @@ def t_not_(t):
 # --------------------- General training ------------------------
 # evaluate a function by batches of size batch_size on the set x
 # and fold over the returned values
-def fold_batches(f, init, x, batch_size, cut_end=False):
+def fold_batches(f, init, x, batch_size, cut_end=False, add_args={}):
     nx = len(x)
     if batch_size <= 0:
-        return f(init, 0, True, x)
+        return f(init, 0, True, x, **add_args)
 
     def red(last, idx):
         end = min(idx + batch_size, nx)
         if cut_end and idx + batch_size > nx:
             return last
         is_final = end > nx - batch_size if cut_end else end == nx
-        return f(last, idx, is_final, x[idx:end])
+        return f(last, idx, is_final, x[idx:end], **add_args)
     return functools.reduce(red, range(0, nx, batch_size), init)
 
 
@@ -274,54 +276,80 @@ def anneal(net, optimizer, epoch, annealing_dict):
     return optim.SGD((p for p in net.parameters() if p.requires_grad), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
 
+def micro_batch_gen(last, i, is_final, batch, net, create_batch, batch_args, create_loss, loss_avg, loss2_avg, loss2_alpha):
+    gc.collect()
+    prev_val, mini_batch_size = last
+    n = len(batch)
+    tensors_in, labels_in = create_batch(batch, n, **batch_args)
+    tensors_out = net(*(Variable(t) for t in tensors_in))
+    loss, loss2 = create_loss(tensors_out, [Variable(l) for l in labels_in])
+    loss_micro = loss * n / mini_batch_size if loss_avg else loss
+    val = loss_micro.data[0]
+    if loss2 is not None:
+        loss2_micro = loss2 * n / mini_batch_size if loss2_avg else loss2
+        loss_micro = loss_micro + loss2_alpha * loss2_micro
+        val = val + loss2_alpha * loss2_micro.data[0]
+    loss_micro.backward()
+    return prev_val + val, mini_batch_size
+
+
+def mini_batch_gen(last, i, is_final, batch, net, optimizer, micro_batch_size, output_stats, stats_args, test_set, epoch, micro_args):
+    batch_count, score, running_loss = last
+    optimizer.zero_grad()
+    loss, _ = fold_batches(micro_batch_gen, (0.0, len(batch)), batch, micro_batch_size, add_args=micro_args)
+    optimizer.step()
+    running_loss, score = output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score, **stats_args)
+    return batch_count + 1, score, running_loss
+
+
 def train_gen(is_classif, net, train_set, test_set, optimizer, params, create_epoch, create_batch, output_stats, create_loss, best_score=0):
     if is_classif:
+        bn_train = params.classif_train_bn
         n_epochs = params.classif_train_epochs
         annealing_dict = params.classif_annealing
-        mini_size = params.classif_train_batch_size
-        micro_size = params.classif_train_micro_batch
+        mini_batch_size = params.classif_train_batch_size
+        micro_batch_size = params.classif_train_micro_batch
         loss_avg = params.classif_loss_avg
+        loss2_avg, loss2_alpha = None, None
     else:
+        bn_train = params.siam_train_bn
         n_epochs = params.siam_train_epochs
         annealing_dict = params.siam_annealing
-        mini_size = params.siam_train_batch_size
-        micro_size = params.siam_train_micro_batch
+        mini_batch_size = params.siam_train_batch_size
+        micro_batch_size = params.siam_train_micro_batch
         loss_avg = params.siam_loss_avg
         loss2_avg = params.siam_do_loss2_avg
         loss2_alpha = params.siam_do_loss2_alpha
 
-    def micro_batch_gen(last, i, is_final, batch):
-        prev_loss, mini_batch_size = last
-        n = len(batch)
-        tensors_in, labels_in = create_batch(batch, n, **batch_args)
-        tensors_out = net(*(Variable(t) for t in tensors_in))
-        loss, loss2 = create_loss(tensors_out, [Variable(l) for l in labels_in])
-        loss_micro = loss * n / mini_batch_size
-        val = loss_micro.data[0] if loss_avg else loss.data[0]
-        if loss2:
-            loss2_micro = loss2 * n / mini_batch_size
-            val += loss2_alpha * (loss2_micro.data[0] if loss2_avg else loss2.data[0])
-            loss_micro += loss2_alpha * loss2_micro
-        loss_micro.backward()
-        return prev_loss + val, mini_batch_size
-
-    def mini_batch_gen(last, i, is_final, batch):
-        batch_count, score, running_loss = last
-        optimizer.zero_grad()
-        loss, _ = fold_batches(micro_batch_gen, (0.0, len(batch)), batch, micro_size)
-        optimizer.step()
-        running_loss, score = output_stats(net, test_set, epoch, batch_count, is_final, loss, running_loss, score, **stats_args)
-        return batch_count + 1, score, running_loss
-
-    net.train()
+    set_net_train(net, True, bn_train=bn_train)
     for epoch in range(n_epochs):
         # annealing
         optimizer = anneal(net, optimizer, epoch, annealing_dict)
 
         dataset, batch_args, stats_args = create_epoch(epoch, train_set, test_set)
 
+        micro_args = {
+            'net': net,
+            'create_batch': create_batch,
+            'batch_args': batch_args,
+            'create_loss': create_loss,
+            'loss_avg': loss_avg,
+            'loss2_avg': loss2_avg,
+            'loss2_alpha': loss2_alpha
+        }
+        mini_args = {
+            'net': net,
+            'optimizer': optimizer,
+            'micro_batch_size': micro_batch_size,
+            'output_stats': output_stats,
+            'stats_args': stats_args,
+            'test_set': test_set,
+            'epoch': epoch,
+            'micro_args': micro_args
+        }
+
         init = 0, best_score, 0.0  # batch count, score, running loss
-        _, best_score, _ = fold_batches(mini_batch_gen, init, dataset, mini_size, cut_end=True)
+        _, best_score, _ = fold_batches(mini_batch_gen, init, dataset, mini_batch_size, cut_end=True, add_args=mini_args)
 
 
 # ---------------------- Evaluation metrics -----------------------
