@@ -15,7 +15,10 @@ from utils import imread_rgb
 
 def get_class_net(labels):
     if P.finetuning:
-        net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
+        if P.classif_train_mode == 'subparts':
+            net = TuneClassifSub(P.cnn_model(pretrained=True), len(labels), P.feature_size2d, untrained_blocks=P.untrained_blocks)
+        else:
+            net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
     else:
         net = P.cnn_model()
     if P.classif_preload_net:
@@ -62,7 +65,10 @@ def classif(labels, classif_test_train_set, classif_test_set, classif_train_set)
     if P.classif_train:
         P.log('Starting classification training')
         # TODO try normal weight initialization in classification training (see faster rcnn in pytorch)
-        train_classif(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, best_score=score)
+        if P.classif_train_mode == 'subparts':
+            train_classif_subparts(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, best_score=score)
+        else:
+            train_classif(class_net, classif_train_set, testset_tuple, labels, criterion, optimizer, best_score=score)
         P.log('Finished classification training')
     return class_net
 
@@ -125,9 +131,15 @@ def main():
         return outs
 
     train_pre_procs = [P.classif_train_pre_proc, P.classif_test_pre_proc, P.siam_train_pre_proc, P.siam_test_pre_proc]
+    if P.classif_train_mode == 'subparts':
+        train_pre_procs[0] = False
     train_trans = [P.classif_train_trans, P.classif_test_trans, P.siam_train_trans, P.siam_test_trans]
 
     classif_train_set, classif_test_train_set, siam_train_set, siam_test_train_set = trans_dataset(train_set_full, train_pre_procs, train_trans)
+    if P.classif_train_mode == 'subparts':
+        for i, (im, lab) in enumerate(classif_train_set):
+            scales = [t(im) for t in P.classif_train_sub_scales]
+            classif_train_set[i] = (scales, lab)
 
     test_pre_procs = [P.classif_test_pre_proc, P.siam_test_pre_proc]
     test_trans = [P.classif_test_trans, P.siam_test_trans]

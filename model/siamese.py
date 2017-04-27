@@ -7,38 +7,6 @@ from nn_utils import *
 from custom_modules import *
 
 
-class FeatureNet(nn.Module):
-    """
-        A simple network consisting only of the features extracted
-        from an underlying CNN, which can be averaged spatially and
-        are then returned as a flat vector
-    """
-    def __init__(self, net, feature_size2d, average_features=False, classify=False):
-        super(FeatureNet, self).__init__()
-        self.features, self.feature_reduc, self.classifier = extract_layers(net)
-        if not classify:
-            self.feature_reduc = nn.Sequential()
-            self.classifier = nn.Sequential()
-            factor = feature_size2d[0] * feature_size2d[1]
-            self.feature_size = get_feature_size(self.features, factor)
-            if average_features:
-                self.feature_reduc = nn.Sequential(
-                    nn.AvgPool2d(feature_size2d)
-                )
-                self.feature_size /= (feature_size2d[0] * feature_size2d[1])
-        else:
-            self.feature_size = get_feature_size(self.classifier)
-        self.norm = NormalizeL2()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.feature_reduc(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        x = self.norm(x)
-        return x
-
-
 class TuneClassif(nn.Module):
     """
         Image classification network based on a pretrained network
@@ -92,6 +60,63 @@ class TuneClassif(nn.Module):
         x = self.feature_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
+        return x
+
+
+class TuneClassifSub(TuneClassif):
+    """
+        Image classification network based on a pretrained network
+        which is then finetuned to a different dataset, as above
+        Here, all sub-parts of the image are classified by
+        convolutionalizing the linear classification layers
+    """
+    def __init__(self, net, num_classes, feature_size2d, untrained_blocks=-1):
+        super(TuneClassifSub, self).__init__(net, num_classes, untrained_blocks, False)
+        # convolutionalize the linear layers in classifier
+        for name, module in self.classifier._modules.items():
+            if isinstance(module, nn.modules.linear.Linear):
+                size2d = feature_size2d
+                if (sum(1 for _ in self.feature_reduc) > 0 or
+                   module is not self.classifier[0]):
+                    size2d = (1, 1)
+                self.classifier._modules[name] = convolutionalize(module, size2d)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.feature_reduc(x)
+        x = self.classifier(x)
+        return x
+
+
+class FeatureNet(nn.Module):
+    """
+        A simple network consisting only of the features extracted
+        from an underlying CNN, which can be averaged spatially and
+        are then returned as a flat vector
+    """
+    def __init__(self, net, feature_size2d, average_features=False, classify=False):
+        super(FeatureNet, self).__init__()
+        self.features, self.feature_reduc, self.classifier = extract_layers(net)
+        if not classify:
+            self.feature_reduc = nn.Sequential()
+            self.classifier = nn.Sequential()
+            factor = feature_size2d[0] * feature_size2d[1]
+            self.feature_size = get_feature_size(self.features, factor)
+            if average_features:
+                self.feature_reduc = nn.Sequential(
+                    nn.AvgPool2d(feature_size2d)
+                )
+                self.feature_size /= (feature_size2d[0] * feature_size2d[1])
+        else:
+            self.feature_size = get_feature_size(self.classifier)
+        self.norm = NormalizeL2()
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.feature_reduc(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        x = self.norm(x)
         return x
 
 

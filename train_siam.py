@@ -172,7 +172,7 @@ def siam_train_stats(net, testset_tuple, epoch, batch_count, is_last, loss, runn
     test_int = P.siam_test_int
     running_loss += loss
     if batch_count % disp_int == disp_int - 1:
-        P.log('[{0:d}, {1:5d}] loss: {2:.3f}'.format(epoch + 1, batch_count + 1, running_loss / disp_int))
+        P.log('[{0:d}, {1:5d}] loss: {2:.5f}'.format(epoch + 1, batch_count + 1, running_loss / disp_int))
         running_loss = 0.0
     # test model every x mini-batches
     if ((test_int > 0 and batch_count % test_int == test_int - 1) or

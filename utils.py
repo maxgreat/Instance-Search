@@ -97,11 +97,11 @@ def scale_cv(new_size, inter=cv2.INTER_CUBIC):
                 return img
             if w < h:
                 ow = new_size
-                oh = int(new_size * h / w)
+                oh = int(float(new_size * h) / w)
                 return cv2.resize(img, (ow, oh), interpolation=inter)
             else:
                 oh = new_size
-                ow = int(new_size * w / h)
+                ow = int(float(new_size * w) / h)
                 return cv2.resize(img, (ow, oh), interpolation=inter)
         return sc_cv
 
@@ -134,6 +134,49 @@ def random_crop_cv(size):
     return rand_crop_cv
 
 
+def affine_cv(img, angle, v_shift, h_shift, sx, sy, cval=0.):
+    # apply translation first to allow the center to be
+    # offset to any position when using rotation
+    mat = np.array([
+        [sy * np.cos(angle), -sy * np.sin(angle), v_shift],
+        [sx * np.sin(angle), sx * np.cos(angle), h_shift],
+        [0., 0., 1.]
+    ])
+    # make sure the transform is applied at the center of the image,
+    # then reset it afterwards
+    offset = (img.shape[0] / 2.0 + 0.5, img.shape[1] / 2.0 + 0.5)
+    mat = np.dot(np.dot(
+        np.array([
+            [1., 0., offset[0]],
+            [0., 1., offset[1]],
+            [0., 0., 1.]]),
+        mat),
+        np.array([
+            [1., 0., -offset[0]],
+            [0., 1., -offset[1]],
+            [0., 0., 1.]]))
+
+    def t(channel):
+        return interpolation.affine_transform(channel, mat[:2, :2], mat[:2, 2], cval=cval)
+    # apply transformation to each channel separately
+    return np.dstack(map(t, (img[:, :, i] for i in range(img.shape[2]))))
+
+
+def random_affine_scale_cv(range_low, range_high):
+    def rand_aff_scale_cv(img):
+        scale = random.uniform(range_low, range_high)
+        return affine_cv(img, 0., 0., 0., scale, scale)
+    return rand_aff_scale_cv
+
+
+def affine_scale_noisy_cv(scale):
+    def aff_scale_noisy(img):
+        img = affine_cv(img.astype(float), 0., 0., 0., scale, scale, cval=.1)
+        img[img == .1] = np.random.randint(256, size=np.sum(img == .1))
+        return img.astype(np.uint8)
+    return aff_scale_noisy
+
+
 def random_affine_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h_flip=False):
     rotation = rotation * (np.pi / 180)
 
@@ -147,32 +190,7 @@ def random_affine_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h
         sy = 1 + random.uniform(-vs_range, vs_range)
         if h_flip and random.random() < 0.5:
             sx = -sx
-
-        # apply translation first to allow the center to be
-        # offset to any position when using rotation
-        mat = np.array([
-            [sy * np.cos(angle), -sy * np.sin(angle), v_shift],
-            [sx * np.sin(angle), sx * np.cos(angle), h_shift],
-            [0., 0., 1.]
-        ])
-        # make sure the transform is applied at the center of the image,
-        # then reset it afterwards
-        offset = (img.shape[0] / 2.0 + 0.5, img.shape[1] / 2.0 + 0.5)
-        mat = np.dot(np.dot(
-            np.array([
-                [1., 0., offset[0]],
-                [0., 1., offset[1]],
-                [0., 0., 1.]]),
-            mat),
-            np.array([
-                [1., 0., -offset[0]],
-                [0., 1., -offset[1]],
-                [0., 0., 1.]]))
-
-        def t(channel):
-            return interpolation.affine_transform(channel, mat[:2, :2], mat[:2, 2])
-        # apply transformation to each channel separately
-        return np.dstack(map(t, (img[:, :, i] for i in range(img.shape[2]))))
+        return affine_cv(img, angle, v_shift, h_shift, sx, sy)
     return rand_affine_cv
 
 
