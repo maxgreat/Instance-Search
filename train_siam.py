@@ -36,7 +36,7 @@ def get_device_and_size(net, n, sim_matrix=False):
 # get all embeddings (feature vectors) of a dataset from a given net
 # the net is assumed to be in eval mode
 def get_embeddings(net, dataset, device, out_size):
-    is_siam2 = isinstance(net, Siamese2)
+    is_siam2 = P.siam_model == 'siam2'
     C, H, W = P.image_input_size
     test_trans = transforms.Compose([])
     if not P.siam_test_pre_proc:
@@ -49,7 +49,7 @@ def get_embeddings(net, dataset, device, out_size):
         n = len(batch)
         if is_siam2:
             # one image at a time
-            test_in = move_device(batch[0][0].unsqueeze(0), P.cuda_device)
+            test_in = move_device(test_trans(batch[0][0].unsqueeze(0)), P.cuda_device)
         else:
             test_in = tensor(P.cuda_device, n, C, H, W)
             for j in range(n):

@@ -50,6 +50,36 @@ def extract_layers(net):
     return features, feature_reduc, classifier
 
 
+def copy_bn_params(m, base_m):
+    if m.weight is not None:
+        m.weight.data.copy_(base_m.weight.data)
+    if m.bias is not None:
+        m.bias.data.copy_(base_m.bias.data)
+    m.running_mean.copy_(base_m.running_mean)
+    m.running_var.copy_(base_m.running_var)
+
+
+def copy_bn_all(seq, base_seq):
+    for m, base_m in zip(seq, base_seq):
+        if isinstance(m, nn.Sequential):
+            copy_bn_all(m, base_m)
+        if isinstance(m, nn.BatchNorm2d):
+            copy_bn_params(m, base_m)
+        if isinstance(m, models.resnet.BasicBlock):
+            copy_bn_params(m.bn1, base_m.bn1)
+            copy_bn_params(m.bn2, base_m.bn2)
+            if m.downsample is None:
+                continue
+            copy_bn_all(m.downsample, base_m.downsample)
+        if isinstance(m, models.resnet.Bottleneck):
+            copy_bn_params(m.bn1, base_m.bn1)
+            copy_bn_params(m.bn2, base_m.bn2)
+            copy_bn_params(m.bn3, base_m.bn3)
+            if m.downsample is None:
+                continue
+            copy_bn_all(m.downsample, base_m.downsample)
+
+
 def bn_new_params(bn, **kwargs):
     w, b, rm, rv = bn.weight, bn.bias, bn.running_mean, bn.running_var
     new_bn = nn.BatchNorm2d(bn.num_features, **kwargs)
@@ -63,30 +93,30 @@ def bn_new_params(bn, **kwargs):
 
 
 def set_batch_norm_params(seq, **kwargs):
-        for name, block in seq._modules.items():
-            if isinstance(block, nn.BatchNorm2d):
-                seq._modules[name] = bn_new_params(block, **kwargs)
-            if isinstance(block, models.resnet.BasicBlock):
-                block.bn1 = bn_new_params(block.bn1, **kwargs)
-                block.bn2 = bn_new_params(block.bn2, **kwargs)
-                if block.downsample is None:
-                    continue
-                for name, m in block.downsample._modules.items():
-                    if isinstance(m, nn.BatchNorm2d):
-                        block.downsample._modules[name] = bn_new_params(m, **kwargs)
-            if isinstance(block, models.resnet.Bottleneck):
-                block.bn1 = bn_new_params(block.bn1, **kwargs)
-                block.bn2 = bn_new_params(block.bn2, **kwargs)
-                block.bn3 = bn_new_params(block.bn3, **kwargs)
-                if block.downsample is None:
-                    continue
-                for name, m in block.downsample._modules.items():
-                    if isinstance(m, nn.BatchNorm2d):
-                        block.downsample._modules[name] = bn_new_params(m, **kwargs)
+    for name, block in seq._modules.items():
+        if isinstance(block, nn.Sequential):
+            set_batch_norm_params(block, **kwargs)
+        if isinstance(block, nn.BatchNorm2d):
+            seq._modules[name] = bn_new_params(block, **kwargs)
+        if isinstance(block, models.resnet.BasicBlock):
+            block.bn1 = bn_new_params(block.bn1, **kwargs)
+            block.bn2 = bn_new_params(block.bn2, **kwargs)
+            if block.downsample is None:
+                continue
+            set_batch_norm_params(block.downsample, **kwargs)
+        if isinstance(block, models.resnet.Bottleneck):
+            block.bn1 = bn_new_params(block.bn1, **kwargs)
+            block.bn2 = bn_new_params(block.bn2, **kwargs)
+            block.bn3 = bn_new_params(block.bn3, **kwargs)
+            if block.downsample is None:
+                continue
+            set_batch_norm_params(block.downsample, **kwargs)
 
 
 def set_batch_norm_train(seq, train):
     for block in seq:
+        if isinstance(block, nn.Sequential):
+            set_batch_norm_train(block, train)
         if isinstance(block, nn.BatchNorm2d):
             block.train(mode=train)
         if isinstance(block, models.resnet.BasicBlock):
@@ -94,18 +124,14 @@ def set_batch_norm_train(seq, train):
             block.bn2.train(mode=train)
             if block.downsample is None:
                 continue
-            for m in block.downsample:
-                if isinstance(m, nn.BatchNorm2d):
-                    m.train(mode=train)
+            set_batch_norm_train(block.downsample, train)
         if isinstance(block, models.resnet.Bottleneck):
             block.bn1.train(mode=train)
             block.bn2.train(mode=train)
             block.bn3.train(mode=train)
             if block.downsample is None:
                 continue
-            for m in block.downsample:
-                if isinstance(m, nn.BatchNorm2d):
-                    m.train(mode=train)
+            set_batch_norm_train(block.downsample, train)
 
 
 # net is assumed to have only one component containing BatchNorm modules:

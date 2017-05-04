@@ -6,6 +6,7 @@ import torch.optim as optim
 from os import path
 
 from model.siamese import *
+from model.nn_utils import *
 from train_classif import *
 from train_siam import *
 from dataset import ReadImages
@@ -15,14 +16,20 @@ from utils import imread_rgb
 
 def get_class_net(labels):
     if P.finetuning:
-        if P.classif_train_mode == 'subparts':
-            net = TuneClassifSub(P.cnn_model(pretrained=True), len(labels), P.feature_size2d, untrained_blocks=P.untrained_blocks)
+        if P.classif_bn_model:
+            bn_model = TuneClassif(P.cnn_model(), len(labels), P.feature_size2d)
+            bn_model.load_state_dict(torch.load(P.classif_bn_model, map_location=lambda storage, location: storage.cpu()))
+            # copy_bn_all(net.features, bn_model.features)
         else:
-            net = TuneClassif(P.cnn_model(pretrained=True), len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
+            bn_model = P.cnn_model(pretrained=True)
+        if P.classif_train_mode == 'subparts':
+            net = TuneClassifSub(bn_model, len(labels), P.feature_size2d, untrained_blocks=P.untrained_blocks)
+        else:
+            net = TuneClassif(bn_model, len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
     else:
         net = P.cnn_model()
     if P.classif_preload_net:
-        net.load_state_dict(torch.load(P.classif_preload_net))
+        net.load_state_dict(torch.load(P.classif_preload_net, map_location=lambda storage, location: storage.cpu()))
     net = move_device(net, P.cuda_device)
     return net
 
@@ -46,7 +53,7 @@ def get_siamese_net(feature_net):
     else:
         net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
     if P.siam_preload_net:
-        net.load_state_dict(torch.load(P.siam_preload_net))
+        net.load_state_dict(torch.load(P.siam_preload_net, map_location=lambda storage, location: storage.cpu()))
     net = move_device(net, P.cuda_device)
     return net
 
@@ -139,6 +146,9 @@ def main():
     if P.classif_train_mode == 'subparts':
         for i, (im, lab) in enumerate(classif_train_set):
             scales = [t(im) for t in P.classif_train_sub_scales]
+            for j, t in enumerate(P.classif_train_trans):
+                if P.classif_train_pre_proc[j]:
+                    scales[j] = t(scales[j])
             classif_train_set[i] = (scales, lab)
 
     test_pre_procs = [P.classif_test_pre_proc, P.siam_test_pre_proc]

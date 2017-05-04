@@ -97,11 +97,11 @@ def scale_cv(new_size, inter=cv2.INTER_CUBIC):
                 return img
             if w < h:
                 ow = new_size
-                oh = int(float(new_size * h) / w)
+                oh = int(round(float(new_size * h) / w))
                 return cv2.resize(img, (ow, oh), interpolation=inter)
             else:
                 oh = new_size
-                ow = int(float(new_size * w) / h)
+                ow = int(round(float(new_size * w) / h))
                 return cv2.resize(img, (ow, oh), interpolation=inter)
         return sc_cv
 
@@ -128,6 +128,25 @@ def random_crop_cv(size):
         th, tw = size
         if w == tw and h == th:
             return img
+        x1 = random.randint(0, w - tw)
+        y1 = random.randint(0, h - th)
+        return img[y1:y1 + th, x1:x1 + tw]
+    return rand_crop_cv
+
+
+# crop randomly using same aspect ratio as image
+# such that shorter side has given size
+def random_crop_keep_ar_cv(short_side):
+    def rand_crop_cv(img):
+        h, w, _ = img.shape
+        if (h <= w and h == short_side) or (w <= h and w == short_side):
+            return img
+        if h < w:
+            th = short_side
+            tw = int(round(float(short_side * w) / h))
+        else:
+            tw = short_side
+            th = int(round(float(short_side * h) / w))
         x1 = random.randint(0, w - tw)
         y1 = random.randint(0, h - th)
         return img[y1:y1 + th, x1:x1 + tw]
@@ -175,6 +194,25 @@ def affine_scale_noisy_cv(scale):
         img[img == .1] = np.random.randint(256, size=np.sum(img == .1))
         return img.astype(np.uint8)
     return aff_scale_noisy
+
+
+def random_affine_noisy_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h_flip=False):
+    rotation = rotation * (np.pi / 180)
+
+    def rand_aff_noisy_cv(img):
+        # compose the affine transformation applied to x
+        angle = np.random.uniform(-rotation, rotation)
+        # shift needs to be scaled by size of image in that dimension
+        v_shift = np.random.uniform(-v_range, v_range) * img.shape[0]
+        h_shift = np.random.uniform(-h_range, h_range) * img.shape[1]
+        sx = 1 + random.uniform(-hs_range, hs_range)
+        sy = 1 + random.uniform(-vs_range, vs_range)
+        if h_flip and random.random() < 0.5:
+            sx = -sx
+        img = affine_cv(img.astype(float), angle, v_shift, h_shift, sx, sy, cval=.1)
+        img[img == .1] = np.random.randint(256, size=np.sum(img == .1))
+        return img.astype(np.uint8)
+    return rand_aff_noisy_cv
 
 
 def random_affine_cv(rotation=0, h_range=0, v_range=0, hs_range=0, vs_range=0, h_flip=False):

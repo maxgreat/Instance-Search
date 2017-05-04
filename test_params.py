@@ -32,7 +32,21 @@ image_sizes = {
     'CLICIDE_video_224sq': (3, 224, 224),
     'CLICIDE_video_384': (3, 224, 224),
     'fourviere_clean2_224sq': (3, 224, 224),
-    'oxford5k_video_224sq': (3, 224, 224)
+    'fourviere_clean2_384': (3, 224, 224),
+    'oxford5k_video_224sq': (3, 224, 224),
+    'oxford5k_video_384': (3, 224, 224)
+}
+
+num_classes = {
+    'CLICIDE': 464,
+    'CLICIDE_max_224sq': 464,
+    'CLICIDE_video_227sq': 464,
+    'CLICIDE_video_224sq': 464,
+    'CLICIDE_video_384': 464,
+    'fourviere_clean2_224sq': 311,
+    'fourviere_clean2_384': 311,
+    'oxford5k_video_224sq': 17,
+    'oxford5k_video_384': 17
 }
 
 feature_sizes = {
@@ -48,7 +62,9 @@ mean_std_files = {
     'CLICIDE_max_224sq': 'data/CLICIDE_224sq_train_ms.txt',
     'CLICIDE_video_384': 'data/CLICIDE_384_train_ms.txt',
     'fourviere_clean2_224sq': 'data/fourviere_224sq_train_ms.txt',
-    'oxford5k_video_224sq': 'data/oxford5k_224sq_train_ms.txt'
+    'fourviere_clean2_384': 'data/fourviere_384_train_ms.txt',
+    'oxford5k_video_224sq': 'data/oxford5k_224sq_train_ms.txt',
+    'oxford5k_video_384': 'data/oxford5k_384_train_ms.txt',
 }
 
 match_image = {
@@ -58,7 +74,9 @@ match_image = {
     'CLICIDE_video_224sq': match_video,
     'CLICIDE_video_384': match_video,
     'fourviere_clean2_224sq': match_fou_clean2,
-    'oxford5k_video_224sq': match_oxford
+    'fourviere_clean2_384': match_fou_clean2,
+    'oxford5k_video_224sq': match_oxford,
+    'oxford5k_video_384': match_oxford
 }
 
 
@@ -83,15 +101,16 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/CLICIDE_video_384'
+        self.dataset_full = 'data/pre_proc/fourviere_clean2_384'
         self.cnn_model = models.resnet152
-        self.cuda_device = 0
+        self.cuda_device = 1
         self.save_dir = 'data'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
         self.dataset_id = self.dataset_full.split('/')[-1]
         self.mean_std_file = mean_std_files[self.dataset_id]
         self.dataset_match_img = match_image[self.dataset_id]
         self.image_input_size = image_sizes[self.dataset_id]
+        self.num_classes = num_classes[self.dataset_id]
         self.finetuning = True
         self.feature_size2d = feature_sizes[(self.cnn_model, self.image_input_size)]
         self.log_file = path.join(self.save_dir, self.unique_str() + '.log')
@@ -106,9 +125,10 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
+        self.classif_bn_model = 'data/finetune_classif/fou_best_resnet152_classif_finetuned.pth.tar'
         self.classif_preload_net = ''
         self.classif_feature_reduc = True
-        self.classif_test_upfront = False
+        self.classif_test_upfront = True
         self.classif_train = True
         self.classif_test_batch_size = 1
         self.classif_test_pre_proc = True
@@ -122,15 +142,17 @@ class TestParams(object):
         self.classif_train_epochs = 50
         self.classif_train_batch_size = 32
         self.classif_train_micro_batch = 1
-        self.classif_train_pre_proc = True
-        self.classif_train_aug_rot = r = 90
+        self.classif_train_aug_rot = r = 180
         self.classif_train_aug_hrange = hr = 0
         self.classif_train_aug_vrange = vr = 0
-        self.classif_train_aug_hsrange = hsr = 0.6
-        self.classif_train_aug_vsrange = vsr = 0.6
+        self.classif_train_aug_hsrange = hsr = 0.5
+        self.classif_train_aug_vsrange = vsr = 0.5
         self.classif_train_aug_hflip = hflip = True
-        self.classif_train_trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)])
-        # self.classif_train_trans = transforms.Compose([random_affine_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
+        trans = transforms.Compose([random_affine_noisy_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
+        # self.classif_train_trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)])
+        # for subparts, transformation for each scale
+        self.classif_train_trans = [trans, trans]
+        self.classif_train_pre_proc = [False, False]
         self.classif_lr = 1e-3
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
@@ -138,7 +160,7 @@ class TestParams(object):
         self.classif_annealing = {30: 0.1}
         self.classif_loss_avg = True
         self.classif_loss_int = 10
-        self.classif_test_int = 50
+        self.classif_test_int = 0
         # the batch norm layer cannot be trained if the micro-batch size
         # is too small, as global variances/means cannot be properly
         # approximated in this case. so train only when having a batch
@@ -146,7 +168,9 @@ class TestParams(object):
         self.classif_train_bn = self.classif_train_micro_batch >= 8 or (self.classif_train_micro_batch <= 0 and (self.classif_train_batch_size >= 8 or self.classif_train_batch_size <= 0))
 
         # list of transforms for all scales in subparts training
-        self.classif_train_sub_scales = [transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)]), transforms.Compose([affine_scale_noisy_cv(3.), transforms.ToTensor(), transforms.Normalize(m, s)])]
+        # the self.classif_train_trans parameter should be a list of same
+        # length representing the train transformation for each scale
+        self.classif_train_sub_scales = [transforms.Compose([]), transforms.Compose([affine_scale_noisy_cv(2.)])]
 
         # settings for feature net constructed from classification net
         self.feature_net_upfront = False
@@ -157,16 +181,16 @@ class TestParams(object):
         # Siamese net general and testing params
         self.siam_model = 'siam2'
         self.siam_preload_net = ''
-        self.siam_test_upfront = False
+        self.siam_test_upfront = True
         self.siam_use_feature_net = True
-        self.siam_train = True
+        self.siam_train = False
         # TODO should this be the number of instances ?
         self.siam_feature_dim = 2048
         self.siam_conv_average = (1, 1)
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
         self.siam_test_batch_size = 1
-        self.siam_test_pre_proc = False
-        self.siam_test_trans = transforms.Compose([scale_cv(320), transforms.ToTensor()])
+        self.siam_test_pre_proc = True
+        self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
             # normalization not done per image during test
             self.siam_test_trans.transforms.append(transforms.Normalize(m, s))
@@ -186,11 +210,11 @@ class TestParams(object):
         self.siam_choice_mode = 'semi-hard'
 
         # general train params
-        self.siam_train_trans = self.siam_test_trans
+        self.siam_train_trans = trans
         self.siam_train_pre_proc = False
-        self.siam_train_batch_size = 64
+        self.siam_train_batch_size = 128
         self.siam_train_micro_batch = 1
-        self.siam_lr = 1e-2
+        self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
         self.siam_optim = 'SGD'

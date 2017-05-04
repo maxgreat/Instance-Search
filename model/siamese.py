@@ -71,13 +71,18 @@ class TuneClassifSub(TuneClassif):
         convolutionalizing the linear classification layers
     """
     def __init__(self, net, num_classes, feature_size2d, untrained_blocks=-1):
-        super(TuneClassifSub, self).__init__(net, num_classes, untrained_blocks, False)
+        super(TuneClassifSub, self).__init__(net, num_classes, untrained_blocks, reduc=True)
+        reduc_count = sum(1 for _ in self.feature_reduc)
+        if reduc_count > 0:
+            # in a ResNet, apply stride 1 feature size avg pool reduction
+            self.feature_reduc = nn.Sequential(
+                nn.AvgPool2d(feature_size2d, stride=1)
+            )
         # convolutionalize the linear layers in classifier
         for name, module in self.classifier._modules.items():
             if isinstance(module, nn.modules.linear.Linear):
                 size2d = feature_size2d
-                if (sum(1 for _ in self.feature_reduc) > 0 or
-                   module is not self.classifier[0]):
+                if reduc_count > 0 or module is not self.classifier[0]:
                     size2d = (1, 1)
                 self.classifier._modules[name] = convolutionalize(module, size2d)
 

@@ -110,9 +110,11 @@ def train_classif(net, train_set, testset_tuple, labels, criterion, optimizer, b
 
 
 def train_classif_subparts(net, train_set, testset_tuple, labels, criterion, optimizer, best_score=0):
-    trans = P.classif_train_trans
-    if P.classif_train_pre_proc:
-        trans = transforms.Compose([])
+    # trans is a list of transforms for each scale here
+    trans_scales = P.classif_train_trans
+    for i, t in enumerate(trans_scales):
+        if P.classif_train_pre_proc[i]:
+            trans_scales[i] = transforms.Compose([])
 
     # images are already pre-processed in all cases
     def create_epoch(epoch, train_set, testset_tuple):
@@ -123,13 +125,16 @@ def train_classif_subparts(net, train_set, testset_tuple, labels, criterion, opt
     def create_batch(batch, n):
         # must proceed image by image (since different input sizes)
         # each image/batch is composed of multiple scales
-        C, H, W = batch[0][0][0].size()
+        if P.classif_train_pre_proc[0]:
+            C, H, W = batch[0][0][0].size()
+        else:
+            H, W, C = batch[0][0][0].shape
         n_sc = len(batch[0][0])
         train_in = tensor(P.cuda_device, n_sc, C, H, W)
         labels_in = tensor_t(torch.LongTensor, P.cuda_device, n_sc)
         label = labels.index(batch[0][1])
         for j in range(n_sc):
-            train_in[j] = trans(batch[0][0][j])
+            train_in[j] = move_device(trans_scales[j](batch[0][0][j]), P.cuda_device)
             labels_in[j] = label
         return [train_in], [labels_in]
 
