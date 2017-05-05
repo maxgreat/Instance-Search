@@ -134,7 +134,7 @@ def main():
             for out, pre_proc, t, f in zip(outs, pre_procs, trans, filters):
                 if f(im, lab):
                     im_out = t(im_o) if pre_proc else im_o
-                    out.append((im_out, lab))
+                    out.append((im_out, lab, im))
         return outs
 
     train_pre_procs = [P.classif_train_pre_proc, P.classif_test_pre_proc, P.siam_train_pre_proc, P.siam_test_pre_proc]

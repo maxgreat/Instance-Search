@@ -252,13 +252,13 @@ def tensor_2_bgr(tensor):
 # images of same label as values
 def get_pos_couples_ibi(dataset, duplicate=True):
     couples = {}
-    for (x1, l1), (x2, l2) in itertools.product(dataset, dataset):
-        if l1 != l2 or (x1 is x2 and not duplicate):
+    for (_, l1, name1), (im2, l2, name2) in itertools.product(dataset, dataset):
+        if l1 != l2 or (name1 is name2 and not duplicate):
             continue
-        if x1 in couples:
-            couples[x1].append(x2)
+        if name1 in couples:
+            couples[name1].append(im2)
         else:
-            couples[x1] = [x2]
+            couples[name1] = [im2]
     return couples
 
 
@@ -268,7 +268,7 @@ def get_pos_couples(dataset, duplicate=True):
     comb = itertools.combinations_with_replacement
     if not duplicate:
         comb = itertools.combinations
-    for (i1, (x1, l1)), (i2, (x2, l2)) in comb(enumerate(dataset), 2):
+    for (i1, (x1, l1, _)), (i2, (x2, l2, _)) in comb(enumerate(dataset), 2):
         if l1 != l2:
             continue
         t = (l1, (i1, i2), (x1, x2))
@@ -423,7 +423,7 @@ def precision1(sim, test_set, ref_set, kth=1):
     for i in range(sim.size(0)):
         # get label from ref set which obtained highest score
         max_label.append(ref_set[max_idx[i, 0]][1])
-    correct = sum(test_label == max_label[j] for j, (_, test_label) in enumerate(test_set))
+    correct = sum(test_label == max_label[j] for j, (_, test_label, _) in enumerate(test_set))
     return float(correct) / total, correct, total, max_sim, max_label
 
 
@@ -432,7 +432,7 @@ def precision1(sim, test_set, ref_set, kth=1):
 # this is used to compute AP even for the train set against train set
 def avg_precision(sim, i, test_set, ref_set, kth=1):
     test_label = test_set[i][1]
-    n_pos = sum(test_label == ref_label for _, ref_label in ref_set)
+    n_pos = sum(test_label == ref_label for _, ref_label, _ in ref_set)
     n_pos -= (kth - 1)
     if n_pos <= 0:
         return None

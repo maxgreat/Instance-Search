@@ -31,7 +31,7 @@ def test_classif_net(net, test_set, labels, batchSize):
             test_in = move_device(batch[0][0].unsqueeze(0), P.cuda_device)
         else:
             test_in = tensor(P.cuda_device, len(batch), C, H, W)
-            for j, (testIm, _) in enumerate(batch):
+            for j, (testIm, _, _) in enumerate(batch):
                 test_in[j] = trans(testIm)
 
         out = net(Variable(test_in, volatile=True)).data
@@ -44,7 +44,7 @@ def test_classif_net(net, test_set, labels, batchSize):
         else:
             _, predicted = torch.max(out, 1)
             total += len(batch)
-            correct += sum(labels.index(testLabel) == predicted[j][0] for j, (_, testLabel) in enumerate(batch))
+            correct += sum(labels.index(testLabel) == predicted[j][0] for j, (_, testLabel, _) in enumerate(batch))
         return correct, total
 
     return fold_batches(eval_batch_test, (0, 0), test_set, batchSize, add_args={'net': net, 'labels': labels})
@@ -98,7 +98,7 @@ def train_classif(net, train_set, testset_tuple, labels, criterion, optimizer, b
     def create_batch(batch, n):
         train_in = tensor(P.cuda_device, n, C, H, W)
         labels_in = tensor_t(torch.LongTensor, P.cuda_device, n)
-        for j, (im, lab) in enumerate(batch):
+        for j, (im, lab, _) in enumerate(batch):
             train_in[j] = trans(im)
             labels_in[j] = labels.index(lab)
         return [train_in], [labels_in]

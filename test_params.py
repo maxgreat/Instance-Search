@@ -101,7 +101,7 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/fourviere_clean2_384'
+        self.dataset_full = 'data/pre_proc/oxford5k_video_384'
         self.cnn_model = models.resnet152
         self.cuda_device = 1
         self.save_dir = 'data'
@@ -125,12 +125,12 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_bn_model = 'data/finetune_classif/fou_best_resnet152_classif_finetuned.pth.tar'
-        self.classif_preload_net = ''
+        self.classif_bn_model = ''
+        self.classif_preload_net = 'data/20170503-161636-704860_best_classif.pth.tar'
         self.classif_feature_reduc = True
-        self.classif_test_upfront = True
-        self.classif_train = True
-        self.classif_test_batch_size = 1
+        self.classif_test_upfront = False
+        self.classif_train = False
+        self.classif_test_batch_size = 32
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
@@ -138,10 +138,10 @@ class TestParams(object):
             self.classif_test_trans.transforms.append(transforms.Normalize(m, s))
 
         # Classification net training params
-        self.classif_train_mode = 'subparts'
+        self.classif_train_mode = ''
         self.classif_train_epochs = 50
         self.classif_train_batch_size = 32
-        self.classif_train_micro_batch = 1
+        self.classif_train_micro_batch = 0
         self.classif_train_aug_rot = r = 180
         self.classif_train_aug_hrange = hr = 0
         self.classif_train_aug_vrange = vr = 0
@@ -151,9 +151,9 @@ class TestParams(object):
         trans = transforms.Compose([random_affine_noisy_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
         # self.classif_train_trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)])
         # for subparts, transformation for each scale
-        self.classif_train_trans = [trans, trans]
-        self.classif_train_pre_proc = [False, False]
-        self.classif_lr = 1e-3
+        self.classif_train_trans = trans
+        self.classif_train_pre_proc = False
+        self.classif_lr = 1e-2
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
         self.classif_optim = 'SGD'
@@ -183,7 +183,7 @@ class TestParams(object):
         self.siam_preload_net = ''
         self.siam_test_upfront = True
         self.siam_use_feature_net = True
-        self.siam_train = False
+        self.siam_train = True
         # TODO should this be the number of instances ?
         self.siam_feature_dim = 2048
         self.siam_conv_average = (1, 1)
@@ -207,12 +207,12 @@ class TestParams(object):
         # 'semi-hard': semi-hard triplets for all positives
         # 'easy-hard': easiest positives with hardest negatives
         self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'semi-hard'
+        self.siam_choice_mode = 'easy-hard'
 
         # general train params
         self.siam_train_trans = trans
         self.siam_train_pre_proc = False
-        self.siam_train_batch_size = 128
+        self.siam_train_batch_size = 64
         self.siam_train_micro_batch = 1
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
@@ -249,12 +249,13 @@ class TestParams(object):
         # n_p: number of easy positives for each image
         # n_n: number of hard negatives for each image
         # n_t: number of hardest triplets actually used for each image
+        # req_triplets: maximal number of triplets used per epoch
         # Note that if less than n_p positives or n_n negatives exist,
         # we clamp the value to the number of positives/negatives resp.
         # Thus, we must have n_t <= n_p and n_t <= n_n
-        self.siam_eh_n_p = 3
+        self.siam_eh_n_p = 25
         self.siam_eh_n_n = 100
-        self.siam_eh_n_t = 3
+        self.siam_eh_n_t = 25
         self.siam_eh_req_triplets = self.siam_train_batch_size * 64
 
     def unique_str(self):
