@@ -101,7 +101,7 @@ class TestParams(object):
         self.uuid = datetime.now()
 
         # general parameters
-        self.dataset_full = 'data/pre_proc/oxford5k_video_384'
+        self.dataset_full = 'data/pre_proc/fourviere_clean2_224sq'
         self.cnn_model = models.resnet152
         self.cuda_device = 1
         self.save_dir = 'data'
@@ -125,12 +125,12 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_bn_model = ''
-        self.classif_preload_net = 'data/20170503-161636-704860_best_classif.pth.tar'
+        self.classif_bn_model = 'data/finetune_classif/fou_best_resnet152_classif_finetuned.pth.tar'
+        self.classif_preload_net = ''
         self.classif_feature_reduc = True
         self.classif_test_upfront = False
         self.classif_train = False
-        self.classif_test_batch_size = 32
+        self.classif_test_batch_size = 1
         self.classif_test_pre_proc = True
         self.classif_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
@@ -138,10 +138,10 @@ class TestParams(object):
             self.classif_test_trans.transforms.append(transforms.Normalize(m, s))
 
         # Classification net training params
-        self.classif_train_mode = ''
-        self.classif_train_epochs = 50
+        self.classif_train_mode = 'subparts'
+        self.classif_train_epochs = 100
         self.classif_train_batch_size = 32
-        self.classif_train_micro_batch = 0
+        self.classif_train_micro_batch = 1
         self.classif_train_aug_rot = r = 180
         self.classif_train_aug_hrange = hr = 0
         self.classif_train_aug_vrange = vr = 0
@@ -151,13 +151,13 @@ class TestParams(object):
         trans = transforms.Compose([random_affine_noisy_cv(rotation=r, h_range=hr, v_range=vr, hs_range=hsr, vs_range=vsr, h_flip=hflip), transforms.ToTensor(), transforms.Normalize(m, s)])
         # self.classif_train_trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize(m, s)])
         # for subparts, transformation for each scale
-        self.classif_train_trans = trans
-        self.classif_train_pre_proc = False
-        self.classif_lr = 1e-2
+        self.classif_train_trans = [trans, trans]
+        self.classif_train_pre_proc = [False, False]
+        self.classif_lr = 5e-3
         self.classif_momentum = 0.9
         self.classif_weight_decay = 5e-4
         self.classif_optim = 'SGD'
-        self.classif_annealing = {30: 0.1}
+        self.classif_annealing = {60: 0.1}
         self.classif_loss_avg = True
         self.classif_loss_int = 10
         self.classif_test_int = 0
@@ -165,7 +165,7 @@ class TestParams(object):
         # is too small, as global variances/means cannot be properly
         # approximated in this case. so train only when having a batch
         # of at least 8
-        self.classif_train_bn = self.classif_train_micro_batch >= 8 or (self.classif_train_micro_batch <= 0 and (self.classif_train_batch_size >= 8 or self.classif_train_batch_size <= 0))
+        self.classif_train_bn = self.classif_train_micro_batch >= 16 or (self.classif_train_micro_batch <= 0 and (self.classif_train_batch_size >= 16 or self.classif_train_batch_size <= 0))
 
         # list of transforms for all scales in subparts training
         # the self.classif_train_trans parameter should be a list of same
@@ -179,7 +179,7 @@ class TestParams(object):
         self.feature_net_classify = True
 
         # Siamese net general and testing params
-        self.siam_model = 'siam2'
+        self.siam_model = ''
         self.siam_preload_net = ''
         self.siam_test_upfront = True
         self.siam_use_feature_net = True
@@ -188,7 +188,7 @@ class TestParams(object):
         self.siam_feature_dim = 2048
         self.siam_conv_average = (1, 1)
         self.siam_cos_margin = 0  # 0: pi/2 angle, 0.5: pi/3, sqrt(3)/2: pi/6
-        self.siam_test_batch_size = 1
+        self.siam_test_batch_size = 16
         self.siam_test_pre_proc = True
         self.siam_test_trans = transforms.Compose([transforms.ToTensor()])
         if not self.test_norm_per_image:
@@ -207,13 +207,13 @@ class TestParams(object):
         # 'semi-hard': semi-hard triplets for all positives
         # 'easy-hard': easiest positives with hardest negatives
         self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'easy-hard'
+        self.siam_choice_mode = 'hard'
 
         # general train params
         self.siam_train_trans = trans
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 64
-        self.siam_train_micro_batch = 1
+        self.siam_train_micro_batch = 8
         self.siam_lr = 1e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
@@ -224,13 +224,13 @@ class TestParams(object):
         self.siam_loss_int = 10
         self.siam_test_int = 0
         # batch norm layer train mode (see above for details)
-        self.siam_train_bn = self.siam_train_micro_batch >= 8 or (self.siam_train_micro_batch <= 0 and (self.siam_train_batch_size >= 8 or self.siam_train_batch_size <= 0))
+        self.siam_train_bn = self.siam_train_micro_batch >= 16 or (self.siam_train_micro_batch <= 0 and (self.siam_train_batch_size >= 16 or self.siam_train_batch_size <= 0))
 
         # Siamese2 params: number of regions to consider
         self.siam2_k = 6
 
         # double objective loss params
-        self.siam_double_objective = True
+        self.siam_double_objective = False
         self.siam_do_loss2_alpha = 1.0
         self.siam_do_loss2_avg = True
 

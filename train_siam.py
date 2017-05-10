@@ -78,9 +78,9 @@ def get_similarities(net, dataset):
 
 # return a random negative for the given label and train set
 def choose_rand_neg(train_set, lab):
-    im_neg, lab_neg = random.choice(train_set)
+    im_neg, lab_neg, _ = random.choice(train_set)
     while (lab_neg == lab):
-        im_neg, lab_neg = random.choice(train_set)
+        im_neg, lab_neg, _ = random.choice(train_set)
     return im_neg
 
 
@@ -189,7 +189,7 @@ def train_siam_couples(net, train_set, testset_tuple, labels, criterion, optimiz
 
     couples = get_pos_couples_ibi(train_set)
     num_pos = sum(len(couples[name]) for name in couples)
-    P.log('#pos (with order, with duplicates):{0}'.format(num_pos))
+    P.log('#pos couples (with order, with duplicates):{0}'.format(num_pos))
     idx_train_set = list(enumerate(train_set))
     sim_device, _ = get_device_and_size(net, len(train_set), sim_matrix=True)
     lab_indicators = get_lab_indicators(train_set, sim_device)

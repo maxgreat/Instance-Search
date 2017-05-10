@@ -144,12 +144,12 @@ def main():
 
     classif_train_set, classif_test_train_set, siam_train_set, siam_test_train_set = trans_dataset(train_set_full, train_pre_procs, train_trans)
     if P.classif_train_mode == 'subparts':
-        for i, (im, lab) in enumerate(classif_train_set):
+        for i, (im, lab, name) in enumerate(classif_train_set):
             scales = [t(im) for t in P.classif_train_sub_scales]
             for j, t in enumerate(P.classif_train_trans):
                 if P.classif_train_pre_proc[j]:
                     scales[j] = t(scales[j])
-            classif_train_set[i] = (scales, lab)
+            classif_train_set[i] = (scales, lab, name)
 
     test_pre_procs = [P.classif_test_pre_proc, P.siam_test_pre_proc]
     test_trans = [P.classif_test_trans, P.siam_test_trans]
