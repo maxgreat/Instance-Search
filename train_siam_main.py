@@ -23,9 +23,9 @@ def get_class_net(labels):
         else:
             bn_model = P.cnn_model(pretrained=True)
         if P.classif_train_mode == 'subparts':
-            net = TuneClassifSub(bn_model, len(labels), P.feature_size2d, untrained_blocks=P.untrained_blocks)
+            net = TuneClassifSub(bn_model, len(labels), P.feature_size2d, untrained=P.untrained_blocks)
         else:
-            net = TuneClassif(bn_model, len(labels), untrained_blocks=P.untrained_blocks, reduc=P.classif_feature_reduc)
+            net = TuneClassif(bn_model, len(labels), untrained=P.untrained_blocks, reduc=P.classif_feature_reduc)
     else:
         net = P.cnn_model()
     if P.classif_preload_net:
@@ -45,13 +45,13 @@ def get_feature_net(class_net):
 
 def get_siamese_net(feature_net):
     if P.siam_model == 'siam2' and P.siam_use_feature_net:
-        net = Siamese2(feature_net, P.siam2_k, P.siam_feature_dim, P.feature_size2d)
+        net = Siamese2(feature_net, P.siam2_k, P.siam_feature_dim, P.feature_size2d, untrained=P.untrained_blocks)
     elif P.siam_model == 'siam2':
-        net = Siamese2(P.cnn_model(pretrained=P.finetuning), P.siam2_k, P.siam_feature_dim, P.feature_size2d)
+        net = Siamese2(P.cnn_model(pretrained=P.finetuning), P.siam2_k, P.siam_feature_dim, P.feature_size2d, untrained=P.untrained_blocks)
     elif P.siam_use_feature_net:
-        net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
+        net = Siamese1(feature_net, P.siam_feature_dim, P.feature_size2d, P.siam_conv_average, untrained=P.untrained_blocks)
     else:
-        net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average)
+        net = Siamese1(P.cnn_model(pretrained=P.finetuning), P.siam_feature_dim, P.feature_size2d, P.siam_conv_average, untrained=P.untrained_blocks)
     if P.siam_preload_net:
         net.load_state_dict(torch.load(P.siam_preload_net, map_location=lambda storage, location: storage.cpu()))
     net = move_device(net, P.cuda_device)

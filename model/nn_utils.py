@@ -2,6 +2,27 @@ import torch.nn as nn
 import torchvision.models as models
 
 
+# n < 0 sets all modules/blocks to be untrained
+def set_untrained_blocks(containers, n):
+    # first make sure everything is trainable (not trainable if n<0)
+    for container in containers:
+        for m in container:
+            for p in m.parameters():
+                p.requires_grad = n >= 0
+
+    count = 0
+    for seq in containers:
+        for m in seq:
+            if count >= n:
+                break
+            if sum(1 for _ in m.parameters()) <= 0:
+                # exclude modules without params from count
+                continue
+            for p in m.parameters():
+                p.requires_grad = False
+            count += 1
+
+
 def convolutionalize(fc, in_size2d):
     # Turn an FC layer into Conv2D layer by copying weights the right way
     out_size = fc.out_features

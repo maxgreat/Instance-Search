@@ -102,7 +102,7 @@ class TestParams(object):
 
         # general parameters
         self.dataset_full = 'data/pre_proc/fourviere_clean2_224sq'
-        self.cnn_model = models.resnet152
+        self.cnn_model = models.alexnet
         self.cuda_device = 1
         self.save_dir = 'data'
         self.dataset_name = self.dataset_full.split('/')[-1].split('_')[0]
@@ -125,7 +125,7 @@ class TestParams(object):
         m, s = readMeanStd(self.mean_std_file)
 
         # Classification net general and test params
-        self.classif_bn_model = 'data/finetune_classif/fou_best_resnet152_classif_finetuned.pth.tar'
+        self.classif_bn_model = ''
         self.classif_preload_net = ''
         self.classif_feature_reduc = True
         self.classif_test_upfront = False
@@ -182,7 +182,7 @@ class TestParams(object):
         self.siam_model = ''
         self.siam_preload_net = ''
         self.siam_test_upfront = True
-        self.siam_use_feature_net = True
+        self.siam_use_feature_net = False
         self.siam_train = True
         # TODO should this be the number of instances ?
         self.siam_feature_dim = 2048
@@ -207,14 +207,14 @@ class TestParams(object):
         # 'semi-hard': semi-hard triplets for all positives
         # 'easy-hard': easiest positives with hardest negatives
         self.siam_train_mode = 'triplets'
-        self.siam_choice_mode = 'hard'
+        self.siam_choice_mode = 'semi-hard'
 
         # general train params
         self.siam_train_trans = trans
         self.siam_train_pre_proc = False
         self.siam_train_batch_size = 64
         self.siam_train_micro_batch = 8
-        self.siam_lr = 1e-3
+        self.siam_lr = 5e-3
         self.siam_momentum = 0.9
         self.siam_weight_decay = 0.0
         self.siam_optim = 'SGD'

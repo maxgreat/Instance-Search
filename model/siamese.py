@@ -13,28 +13,16 @@ class TuneClassif(nn.Module):
         which is then finetuned to a different dataset
         It's assumed that the last layer of the given network
         is a fully connected (linear) one
-        untrained_blocks specifies how many layers or blocks of layers are
+        untrained specifies how many layers or blocks of layers are
         left untrained (only layers with parameters are counted). for ResNet, each 'BottleNeck' or 'BasicBlock' (block containing skip connection for residual) is considered as one block
     """
 
-    def __init__(self, net, num_classes, untrained_blocks=-1, reduc=True):
+    def __init__(self, net, num_classes, untrained=-1, reduc=True):
         super(TuneClassif, self).__init__()
         self.features, self.feature_reduc, self.classifier = extract_layers(net)
-        if untrained_blocks < 0:
-            untrained_blocks = sum(1 for _ in self.features) + sum(1 for _ in self.classifier)
         # make sure we never retrain the first few layers
         # this is usually not needed
-        seqs = [self.features, self.feature_reduc, self.classifier]
-
-        def has_param(m):
-            return sum(1 for _ in m.parameters()) > 0
-        count = 0
-        for module in (m for seq in seqs for m in seq if has_param(m)):
-            if count >= untrained_blocks:
-                break
-            count += 1
-            for p in module.parameters():
-                p.requires_grad = False
+        set_untrained_blocks([self.features, self.classifier], untrained)
 
         # replace last module of classifier with a reduced one
         for name, module in self.classifier._modules.items():
@@ -70,8 +58,8 @@ class TuneClassifSub(TuneClassif):
         Here, all sub-parts of the image are classified by
         convolutionalizing the linear classification layers
     """
-    def __init__(self, net, num_classes, feature_size2d, untrained_blocks=-1):
-        super(TuneClassifSub, self).__init__(net, num_classes, untrained_blocks, reduc=True)
+    def __init__(self, net, num_classes, feature_size2d, untrained=-1):
+        super(TuneClassifSub, self).__init__(net, num_classes, untrained, reduc=True)
         reduc_count = sum(1 for _ in self.feature_reduc)
         if reduc_count > 0:
             # in a ResNet, apply stride 1 feature size avg pool reduction
@@ -98,6 +86,7 @@ class FeatureNet(nn.Module):
         A simple network consisting only of the features extracted
         from an underlying CNN, which can be averaged spatially and
         are then returned as a flat vector
+        This is only used for evaluation purposes and not trained
     """
     def __init__(self, net, feature_size2d, average_features=False, classify=False):
         super(FeatureNet, self).__init__()
@@ -133,9 +122,10 @@ class Siamese1(nn.Module):
         descriptor.
         TODO description, feature reduc (resnet was trained for this avgpool)
     """
-    def __init__(self, net, feature_dim, feature_size2d, spatial_avg_factor=(1, 1)):
+    def __init__(self, net, feature_dim, feature_size2d, spatial_avg_factor=(1, 1), untrained=-1):
         super(Siamese1, self).__init__()
         self.features, _, classifier = extract_layers(net)
+        set_untrained_blocks([self.features], untrained)
         if spatial_avg_factor[0] == -1:
             spatial_avg_factor[0] = feature_size2d[0]
         if spatial_avg_factor[1] == -1:
@@ -188,7 +178,7 @@ class Siamese2(nn.Module):
 
         Use the k highest values from the classifier to obtain descriptor
     """
-    def __init__(self, net, k, feature_dim, feature_size2d):
+    def __init__(self, net, k, feature_dim, feature_size2d, untrained=-1):
         super(Siamese2, self).__init__()
         self.k = k
         self.feature_size2d = feature_size2d
@@ -214,6 +204,7 @@ class Siamese2(nn.Module):
                 if reduc_count > 0 or module is not self.classifier[0]:
                     size2d = (1, 1)
                 self.classifier._modules[name] = convolutionalize(module, size2d)
+        set_untrained_blocks([self.features, self.classifier], untrained)
         self.feature_reduc1 = nn.Sequential(
             NormalizeL2(),
             Shift(in_features),
