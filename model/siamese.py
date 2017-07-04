@@ -25,9 +25,12 @@ class TuneClassif(nn.Module):
         set_untrained_blocks([self.features, self.classifier], untrained)
 
         # replace last module of classifier with a reduced one
-        for name, module in self.classifier._modules.items():
-            if module is self.classifier[len(self.classifier._modules) - 1]:
-                self.classifier._modules[name] = nn.Linear(module.in_features, num_classes)
+        last_module = self.classifier[len(self.classifier._modules) - 1]
+        if not isinstance(last_module, nn.Linear) or last_module.out_features != num_classes:
+            for name, module in self.classifier._modules.items():
+                if module is last_module:
+                    self.classifier._modules[name] = nn.Linear(module.in_features, num_classes)
+
         self.feature_size = num_classes
         # if no reduc is wanted, remove it
         if not reduc:
@@ -67,73 +70,38 @@ class TuneClassifSub(TuneClassif):
                 nn.AvgPool2d(feature_size2d, stride=1)
             )
         # convolutionalize the linear layers in classifier
+        count = 0
         for name, module in self.classifier._modules.items():
             if isinstance(module, nn.modules.linear.Linear):
                 size2d = feature_size2d
-                if reduc_count > 0 or module is not self.classifier[0]:
+                if reduc_count > 0 or count > 0:
                     size2d = (1, 1)
                 self.classifier._modules[name] = convolutionalize(module, size2d)
+                count += 1
 
-    def forward(self, x):
+    def forward_single(self, x):
         x = self.features(x)
         x = self.feature_reduc(x)
         x = self.classifier(x)
         return x
 
-
-class FeatureNet(nn.Module):
-    """
-        A simple network consisting only of the features extracted
-        from an underlying CNN, which can be averaged spatially and
-        are then returned as a flat vector
-        This is only used for evaluation purposes and not trained
-    """
-    def __init__(self, net, feature_size2d, average_features=False, classify=False):
-        super(FeatureNet, self).__init__()
-        self.features, self.feature_reduc, self.classifier = extract_layers(net)
-        if not classify:
-            self.feature_reduc = nn.Sequential()
-            self.classifier = nn.Sequential()
-            factor = feature_size2d[0] * feature_size2d[1]
-            self.feature_size = get_feature_size(self.features, factor)
-            if average_features:
-                self.feature_reduc = nn.Sequential(
-                    nn.AvgPool2d(feature_size2d)
-                )
-                self.feature_size /= (feature_size2d[0] * feature_size2d[1])
-        else:
-            self.feature_size = get_feature_size(self.classifier)
-        self.norm = NormalizeL2()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.feature_reduc(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        x = self.norm(x)
-        return x
+    def forward(self, *scales):
+        return [self.forward_single(x) for x in scales]
 
 
-class Siamese1(nn.Module):
+class DescriptorNet(nn.Module):
     """
         Define a siamese network
         Given a network, obtain its features, then apply spatial reduction
         (optional) and a norm, shift+linear, norm reduction to obtain a
         descriptor.
-        TODO description, feature reduc (resnet was trained for this avgpool)
+        TODO description
     """
-    def __init__(self, net, feature_dim, feature_size2d, spatial_avg_factor=(1, 1), untrained=-1):
-        super(Siamese1, self).__init__()
+    def __init__(self, net, feature_dim, feature_size2d, untrained=-1):
+        super(DescriptorNet, self).__init__()
         self.features, _, classifier = extract_layers(net)
         set_untrained_blocks([self.features], untrained)
-        if spatial_avg_factor[0] == -1:
-            spatial_avg_factor[0] = feature_size2d[0]
-        if spatial_avg_factor[1] == -1:
-            spatial_avg_factor[1] = feature_size2d[1]
-        self.spatial_feature_reduc = nn.Sequential(
-            nn.AvgPool2d(spatial_avg_factor)
-        )
-        factor = feature_size2d[0] * feature_size2d[1] / (spatial_avg_factor[0] * spatial_avg_factor[1])
+        factor = feature_size2d[0] * feature_size2d[1]
         in_features = get_feature_size(self.features, factor)
         if feature_dim <= 0:
             self.feature_size = get_feature_size(classifier)
@@ -148,7 +116,6 @@ class Siamese1(nn.Module):
 
     def forward_single(self, x):
         x = self.features(x)
-        x = self.spatial_feature_reduc(x)
         x = x.view(x.size(0), -1)
         x = self.feature_reduc1(x)
         x = self.feature_reduc2(x)
@@ -163,7 +130,7 @@ class Siamese1(nn.Module):
             return self.forward_single(x1)
 
 
-class Siamese2(nn.Module):
+class RegionDescriptorNet(nn.Module):
     """
         Define a siamese network
         Given a network, obtain its features and apply spatial reduction
@@ -175,10 +142,11 @@ class Siamese2(nn.Module):
         In order to allow training for both the descriptor and the classifier,
         the classification values are output as well as the descriptor
         for all input images.
+
         Use the k highest values from the classifier to obtain descriptor
     """
     def __init__(self, net, k, feature_dim, feature_size2d, untrained=-1):
-        super(Siamese2, self).__init__()
+        super(RegionDescriptorNet, self).__init__()
         self.k = k
         self.feature_size2d = feature_size2d
         self.features, self.feature_reduc, self.classifier = extract_layers(net)
@@ -197,12 +165,14 @@ class Siamese2(nn.Module):
                 nn.AvgPool2d(feature_size2d, stride=1)
             )
         # convolutionalize the linear layers in classifier
+        count = 0
         for name, module in self.classifier._modules.items():
             if isinstance(module, nn.modules.linear.Linear):
                 size2d = feature_size2d
-                if reduc_count > 0 or module is not self.classifier[0]:
+                if reduc_count > 0 or count > 0:
                     size2d = (1, 1)
                 self.classifier._modules[name] = convolutionalize(module, size2d)
+                count += 1
         set_untrained_blocks([self.features, self.classifier], untrained)
         self.feature_reduc1 = nn.Sequential(
             NormalizeL2(),
@@ -216,12 +186,16 @@ class Siamese2(nn.Module):
         x = self.features(x)
         c = self.feature_reduc(x)
         c = self.classifier(c)
-        # TODO this method of obtaining topk values assumes batch size 1
+        # get maximal classification values and choose indexes with
+        # highest maximal classification
         c_maxv, _ = c.max(1)
         c_maxv = c_maxv.view(-1)
         k = min(c_maxv.size(0), self.k)
         _, flat_idx = c_maxv.topk(k)
 
+        # transform flat classification indexes to feature indexes
+        # first, flat index -> 2d classification index, then add
+        # feature size to obtain the region in feature map
         def feature_idx(flat_idx):
             cls_idx = flat_idx // c.size(3), flat_idx % c.size(3)
             return (cls_idx[0], cls_idx[0] + self.feature_size2d[0],
@@ -233,14 +207,18 @@ class Siamese2(nn.Module):
         tmp = c_maxv.data.clone().resize_(c.size(0), c.size(1), self.k)
         cls_out = Variable(tmp.fill_(0))
 
+        # for all top maximal classification indexes, output the actual
+        # classification values at those indexes
+        # for the descriptor, use the feature indexes and then reduce
+        # accumulate regional descriptors using addition
         i = 0
         for x1, x2, y1, y2 in top_idx:
             cls_out[:, :, i] = c[:, :, x1, y1]
             i += 1
-            # region = x[:, :, x1, y1]
             region = x[:, :, x1:x2, y1:y2].contiguous().view(x.size(0), -1)
             region = self.feature_reduc1(region)
             acc = acc + region
+        # finally, perform final reduction (normalization)
         x = self.feature_reduc2(acc)
         return x, cls_out
 
